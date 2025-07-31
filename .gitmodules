@@ -1,0 +1,3 @@
+[submodule "lib/gtirb"]
+	path = lib/gtirb
+	url = git@github.com:GrammaTech/gtirb.git

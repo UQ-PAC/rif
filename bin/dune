@@ -1,0 +1,4 @@
+(executable
+ (public_name rif)
+ (name main)
+ (libraries rif))
