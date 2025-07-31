@@ -21,7 +21,6 @@
    ocaml
    (asli (>= 0.3.0))
    (ocaml-protoc-plugin (>= 6.1.0))
-   (aslp_client_server_ocaml (>= 0.1.2))
  )
  (tags ("add topics" "to describe" your project))
 )
