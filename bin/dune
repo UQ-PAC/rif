@@ -1,4 +1,5 @@
 (executable
  (public_name rif)
  (name main)
- (libraries rif))
+ (libraries rif)
+ (modules main gtirb datalog))

@@ -1,45 +1,49 @@
 open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
 
-let component = ref ""
+open Gtirb
+
+(* Argument parsing *)
+let component = ref "main"
 let input_gts = ref ""
-let input_relf = ref ""
 let speclist = [( "--function", Arg.Set_string component, "the function to be RIF-checked")]
-let usage = Printf.sprintf "Usage: %s [options] input.gts input.relf" Sys.argv.(0)
+let usage = Printf.sprintf "Usage: %s [options] input.gts" Sys.argv.(0)
 
 let argc = ref 0
 let args arg =
-  argc := 1 + !argc;
-  match !argc with
-  | 1 -> input_gts := arg
-  | 2 -> input_relf := arg
-  | _ -> ()
+    argc := 1 + !argc;
+    match !argc with
+    | 1 -> input_gts := arg
+    | _ -> ()
 
 
-let read_ir filename =
-  let bytes =
-    let gts = open_in_bin filename in
-    let len = in_channel_length gts in
-    let magic = really_input_string gts 8 in
-    let rest = really_input_string gts (len - 8) in
-    let res = if String.starts_with ~prefix:"GTIRB" magic then rest else magic ^ rest in
-    close_in gts;
-    res
-  in
-
-  let gtirb = IR.from_proto (Reader.create bytes) in
-
-  let ir =
+(* From UQ-PAC/gtirb_semantics *)
+let read_gts filename =
+    let bytes_in =
+        let gts = open_in_bin filename in
+        let len = in_channel_length gts in
+        let magic = really_input_string gts 8 in
+        let rest = really_input_string gts (len - 8) in
+        let res = if String.starts_with ~prefix:"GTIRB" magic then rest else magic ^ rest in
+        close_in gts;
+        res
+    in
+    let gtirb = IR.from_proto (Reader.create bytes_in) in
     match gtirb with
     | Ok a -> a
-    | Error e -> failwith (Printf.sprintf "%s%s" "Could not reply request: "
+    | Error e -> failwith (Printf.sprintf "Could not reply request: %s"
                            (Ocaml_protoc_plugin.Result.show_error e))
-  in
-  ir
+
 
 (* MAIN *)
 let () =
-  Arg.parse speclist args usage;
-  if !argc <> 2 then (output_string stderr usage; exit 1);
+    Arg.parse speclist args usage;
+    if !argc <> 1 then (output_string stderr usage; exit 1);
 
-  let ir = read_ir !input_gts in ()
+    let ir = read_gts !input_gts in
+    let (symbols, blocks) = Gtirb.parse ir in
+
+    let symbol = Gtirb.symbol_by_name symbols !component in
+    let uuid = Gtirb.expect_referent_uuid symbol in
+    let block = Gtirb.codeblock_by_uuid blocks uuid in
+    ignore block

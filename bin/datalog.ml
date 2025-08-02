@@ -1,0 +1,2 @@
+module Datalog = struct
+end

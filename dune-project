@@ -21,6 +21,8 @@
    ocaml
    (asli (>= 0.3.0))
    (ocaml-protoc-plugin (>= 6.1.0))
+   (datalog (>= 0.7))
+   yojson
  )
  (tags ("add topics" "to describe" your project))
 )

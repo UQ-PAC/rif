@@ -1,23 +1,34 @@
 (library
  (name rif)
- (libraries ocaml-protoc-plugin)
- )
+ (libraries ocaml-protoc-plugin))
 
 (rule
- (targets auxData.ml byteInterval.ml cFG.ml codeBlock.ml dataBlock.ml iR.ml module.ml offset.ml proxyBlock.ml section.ml symbol.ml symbolicExpression.ml)
+ (targets
+  auxData.ml
+  byteInterval.ml
+  cFG.ml
+  codeBlock.ml
+  dataBlock.ml
+  iR.ml
+  module.ml
+  offset.ml
+  proxyBlock.ml
+  section.ml
+  symbol.ml
+  symbolicExpression.ml)
  (deps
-   (:proto gtirb/proto/AuxData.proto
-           gtirb/proto/ByteInterval.proto
-           gtirb/proto/CFG.proto
-           gtirb/proto/CodeBlock.proto
-           gtirb/proto/DataBlock.proto
-           gtirb/proto/IR.proto
-           gtirb/proto/Module.proto
-           gtirb/proto/Offset.proto
-           gtirb/proto/ProxyBlock.proto
-           gtirb/proto/Section.proto
-           gtirb/proto/Symbol.proto
-           gtirb/proto/SymbolicExpression.proto)
- )
- (action (run protoc -I gtirb/proto --ocaml_out=. %{proto}))
-)
+  (:proto
+   gtirb/proto/AuxData.proto
+   gtirb/proto/ByteInterval.proto
+   gtirb/proto/CFG.proto
+   gtirb/proto/CodeBlock.proto
+   gtirb/proto/DataBlock.proto
+   gtirb/proto/IR.proto
+   gtirb/proto/Module.proto
+   gtirb/proto/Offset.proto
+   gtirb/proto/ProxyBlock.proto
+   gtirb/proto/Section.proto
+   gtirb/proto/Symbol.proto
+   gtirb/proto/SymbolicExpression.proto))
+ (action
+  (run protoc -I gtirb/proto --ocaml_out=. %{proto})))
