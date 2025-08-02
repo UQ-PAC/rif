@@ -1,2 +1,1 @@
-module Datalog = struct
-end
+module Datalog = struct end
