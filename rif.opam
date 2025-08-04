@@ -15,6 +15,7 @@ depends: [
   "ocaml-protoc-plugin" {>= "6.1.0"}
   "datalog" {>= "0.7"}
   "yojson"
+  "base64"
   "odoc" {with-doc}
 ]
 build: [

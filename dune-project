@@ -23,6 +23,7 @@
    (ocaml-protoc-plugin (>= 6.1.0))
    (datalog (>= 0.7))
    yojson
+   base64
  )
  (tags ("add topics" "to describe" your project))
 )
