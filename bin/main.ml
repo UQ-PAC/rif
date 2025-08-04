@@ -45,9 +45,23 @@ let () =
     exit 1);
 
   let ir = read_gts !input_gts in
-  let symbols, blocks = Gtirb.parse ir in
+  let cfg, symbols, blocks = Gtirb.parse ir in
+  print_endline
+    (Printf.sprintf "[!] Successfully read %s intermediate representation..."
+       !input_gts);
 
   let symbol = Gtirb.symbol_by_name symbols !component in
   let uuid = Gtirb.expect_referent_uuid symbol in
-  let block = Gtirb.codeblock_by_uuid blocks uuid in
-  ignore block
+  print_endline
+    (Printf.sprintf "[!] Located the entry-point block of function %s..."
+       !component);
+
+  let code =
+    [ Gtirb.codeblock_by_uuid blocks uuid ]
+    @ Gtirb.all_func_codeblocks blocks cfg uuid
+  in
+  print_endline
+    (Printf.sprintf "[!] Found %i codeblock%s associated with function..."
+       (List.length code)
+       (if List.length code == 1 then "" else "s"));
+  ignore code

@@ -18,7 +18,9 @@ module Gtirb = struct
   (* IR helpers *)
   let parse (ir : p_ir) =
     let modules = ir.modules in
-    let cfg = ir.cfg in
+    let cfg =
+      match ir.cfg with Some c -> c | _ -> failwith "No CFG in this IR!"
+    in
     let sections = flatmap (fun (m : p_module) -> m.sections) modules in
     let symbols = flatmap (fun (m : p_module) -> m.symbols) modules in
     let intervals =
@@ -26,7 +28,8 @@ module Gtirb = struct
     in
     let blocks = flatmap (fun (i : p_interval) -> i.blocks) intervals in
 
-    (* symbolic_expressions is originally a map (int * p_symexprs option) *)
+    (* symbolic_expressions is originally a map (int * p_symexprs option)
+       we don't need it yet, but it's a hassle to extract, so the code is staying in *)
     let unmap t =
       List.filter_map
         (fun (i : int * p_symexprs option) -> match i with _, a -> a)
@@ -37,7 +40,6 @@ module Gtirb = struct
     in
     ignore exprs;
 
-    (* we don't need it yet, but it's a hassle to extract, so the code is staying in *)
     (cfg, symbols, blocks)
 
   (* Symbol helpers *)
@@ -83,12 +85,31 @@ module Gtirb = struct
              (Bytes.to_string uuid))
 
   (* CFG helpers *)
-  let traverse_cfg_uuids (cfg : p_cfg) (u : bytes) : bytes list =
-    let targets (e : p_cfgedge) =
-      if Bytes.equal e.source_uuid u then Some e.target_uuid else None
+  let traverse (cfg : p_cfg) (uuid : bytes) =
+    (* Edges of type Branch or Fallthrough mean the other block is still in "this function" *)
+    let find_targets_of (u : bytes) (e : p_cfgedge) =
+      if Bytes.equal e.source_uuid u then
+        match e.label with
+        | Some l -> (
+            match l.type' with
+            | Type_Branch | Type_Fallthrough -> Some e.target_uuid
+            | _ -> None)
+        | _ -> None
+      else None
     in
-    List.filter_map targets cfg.edges
 
-  let all_func_codeblocks (bs : p_block list) (cfg : p_cfg) (u : bytes) =
-    List.map (codeblock_by_uuid bs) (traverse_cfg_uuids cfg u)
+    let traverse_once (u : bytes) : bytes list =
+      List.filter_map (find_targets_of u) cfg.edges
+    in
+
+    let rec traverse_until (u : bytes list) : bytes list =
+      let next = flatmap traverse_once u in
+      if List.compare_lengths u next == 0 then u else traverse_until next
+    in
+
+    traverse_until [ uuid ]
+
+  let all_func_codeblocks (bs : p_block list) (cfg : p_cfg) (u : bytes) :
+      p_code list =
+    List.map (codeblock_by_uuid bs) (traverse cfg u)
 end
