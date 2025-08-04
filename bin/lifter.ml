@@ -17,43 +17,6 @@ module Lifter = struct
   type p_seattr = Rif.SymbolicExpression.Gtirb.Proto.SymAttribute.t
   type p_aux = Rif.AuxData.Gtirb.Proto.AuxData.t
 
-  module SemanticsMap = Map.Make (Bytes)
-
-  (* IR helpers *)
-  let parse (ir : p_ir) =
-    let modules = ir.modules in
-    let cfg =
-      match ir.cfg with Some c -> c | _ -> failwith "Bad IR: no CFG found!"
-    in
-    let sections = flatmap (fun (m : p_module) -> m.sections) modules in
-    let auxs = flatmap (fun (m : p_module) -> m.aux_data) modules in
-    let symbols = flatmap (fun (m : p_module) -> m.symbols) modules in
-    let intervals =
-      flatmap (fun (s : p_section) -> s.byte_intervals) sections
-    in
-    let blocks = flatmap (fun (i : p_interval) -> i.blocks) intervals in
-
-    (* symbolic_expressions is originally a map (int * p_symexprs option)
-       we don't need it yet, but it's a hassle to extract, so the code is staying in *)
-    let unmap t =
-      List.filter_map
-        (fun (i : int * p_symexprs option) -> match i with _, a -> a)
-        t
-    in
-    let exprs =
-      flatmap (fun (i : p_interval) -> unmap i.symbolic_expressions) intervals
-    in
-    ignore exprs;
-
-    let semantic_aux =
-      List.filter_map
-        (fun (a : string * p_aux option) ->
-          match a with k, v when String.equal k "ast" -> v | _ -> None)
-        auxs
-    in
-
-    (cfg, symbols, blocks, semantic_aux)
-
   (* Symbol helpers *)
   (* Given a name, search the list of symbols for a symbol with that name. If you can't find one, die. *)
   let symbol_by_name (ss : p_symbol list) (name : string) : p_symbol =
@@ -190,9 +153,83 @@ module Lifter = struct
     in
 
     (* make map-ish for uuid -> list of list of string *)
-    let map_ish = List.map (fun u -> (u, sem_of_uuid u)) us in
+    List.map (fun u -> (u, sem_of_uuid u)) us
 
-    List.fold_left
-      (fun m (k, v) -> SemanticsMap.add k v m)
-      SemanticsMap.empty map_ish
+  (* Lifter-related things that dont directly twiddle with gtirb *)
+  let instruction_view (ss : (bytes * string list) list) (bs : p_interval list)
+      =
+    ignore ss;
+    ignore bs;
+    ()
+
+  (* IR helpers / aka main Lifter entrypoint *)
+  let parse (ir : p_ir) (component : string) (verb : bool) =
+    let modules = ir.modules in
+    let cfg =
+      match ir.cfg with Some c -> c | _ -> failwith "Bad IR: no CFG found!"
+    in
+    let sections = flatmap (fun (m : p_module) -> m.sections) modules in
+    let auxs = flatmap (fun (m : p_module) -> m.aux_data) modules in
+    let symbols = flatmap (fun (m : p_module) -> m.symbols) modules in
+    let intervals =
+      flatmap (fun (s : p_section) -> s.byte_intervals) sections
+    in
+    let blocks = flatmap (fun (i : p_interval) -> i.blocks) intervals in
+
+    (* symbolic_expressions is originally a map (int * p_symexprs option)
+       we don't need it yet, but it's a hassle to extract, so the code is staying in *)
+    let unmap t =
+      List.filter_map
+        (fun (i : int * p_symexprs option) -> match i with _, a -> a)
+        t
+    in
+    let exprs =
+      flatmap (fun (i : p_interval) -> unmap i.symbolic_expressions) intervals
+    in
+    ignore exprs;
+
+    let json_semantics =
+      match
+        parse_semantics
+          (List.filter_map
+             (fun (a : string * p_aux option) ->
+               match a with k, v when String.equal k "ast" -> v | _ -> None)
+             auxs)
+      with
+      | [] -> failwith "Bad IR: no semantics found!"
+      | l -> l
+    in
+
+    let () = if verb then print_endline "[!] Successfully read IR..." in
+
+    (* mainline reading-stuff *)
+    let component_uuid =
+      expect_referent_uuid (symbol_by_name symbols component)
+    in
+
+    let () =
+      if verb then
+        print_endline
+          (Printf.sprintf "[!] Found entrypoint for function %s..." component)
+    in
+
+    let codeblocks =
+      [ codeblock_by_uuid blocks component_uuid ]
+      @ all_func_codeblocks blocks cfg component_uuid
+    in
+    let code_uuids = List.map (fun (c : p_code) -> c.uuid) codeblocks in
+
+    let semantics_per_block = find_for_blocks code_uuids json_semantics in
+
+    let () =
+      if verb then
+        print_endline
+          (Printf.sprintf
+             "[!] Found semantic information for %i instructions..."
+             (List.fold_left
+                (fun c (_, l) -> c + List.length l)
+                0 semantics_per_block))
+    in
+
+    semantics_per_block
 end
