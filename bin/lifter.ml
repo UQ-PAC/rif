@@ -1,7 +1,10 @@
-let flatmap f ls = List.flatten @@ List.map f ls
-let b64_bytes b = Base64.encode_exn @@ Bytes.to_string @@ b
+(****************************************************************************************
+  Utilities and aiases for the Lifter interface
+*)
+module Util = struct
+  let flatmap f ls = List.flatten @@ List.map f ls
+  let b64_bytes b = Base64.encode_exn @@ Bytes.to_string @@ b
 
-module Lifter = struct
   (* Protobuf types, shouldn't be needed outside *)
   type p_ir = Rif.IR.Gtirb.Proto.IR.t
   type p_cfg = Rif.CFG.Gtirb.Proto.CFG.t
@@ -17,107 +20,122 @@ module Lifter = struct
   type p_addrconst = Rif.SymbolicExpression.Gtirb.Proto.SymAddrConst.t
   type p_seattr = Rif.SymbolicExpression.Gtirb.Proto.SymAttribute.t
   type p_aux = Rif.AuxData.Gtirb.Proto.AuxData.t
+end
 
-  (* Actual output types *)
-  module Blocks = Map.Make (Bytes)
+(* See lifter.mli *)
+type edgetype = Linear | Call | Entry
+type outgoing_edge = bytes * edgetype
+type instruction_semantics = string list
 
-  (* Edges in our sub-CFG are either straight instruction-to-instruction or call-and-return
-     Reordering over call-and-return is not considered. Bonus "entry" edge for the first block.
-   *)
-  type edgetype = Linear | Call | Entry
-  type outgoing_edge = bytes * edgetype
-  type instruction_semantics = string list
+type blockdata = {
+  outgoing_edges : outgoing_edge list;
+  block_semantics : instruction_semantics list;
+  offset : int;
+}
 
-  type blockdata = {
-    outgoing_edges : outgoing_edge list;
-    block_semantics : instruction_semantics list;
-    offset : int;
-  }
+module Blocks = Map.Make (Bytes)
 
-  (* Internal, pre-map CFG type *)
-  type edge = bytes * bytes * edgetype
-  type cfg = edge list
-
+(****************************************************************************************
+  Lookups of things inside GTIRB / GTS intermediate representation
+*)
+module Lookup = struct
   (* Symbol -> block UUID lookup *)
-  let symbol_to_uuid (syms : p_symbol list) (name : string) : bytes =
-    let symbol_by_name (ss : p_symbol list) (name : string) : p_symbol =
-      let matches (s : p_symbol) =
+  let symbol_to_uuid (syms : Util.p_symbol list) (name : string) : bytes =
+    let symbol_by_name (ss : Util.p_symbol list) (name : string) : Util.p_symbol
+        =
+      let matches (s : Util.p_symbol) =
         if String.equal s.name name then Some s else None
       in
       match List.find_map matches ss with
       | Some sym -> sym
-      | _ -> failwith (Printf.sprintf "Could not find symbol %s" name)
+      | _ ->
+          failwith (Printf.sprintf "Bad input: could not find symbol %s" name)
     in
 
-    let expect_referent_uuid (s : p_symbol) : bytes =
+    let expect_referent_uuid (s : Util.p_symbol) : bytes =
       match s.optional_payload with
       | `Referent_uuid (uuid : bytes) -> uuid
       | _ ->
           failwith
-            (Printf.sprintf "Symbol %s does not refer to a block!" s.name)
+            (Printf.sprintf "Bad input: symbol %s does not refer to a block!"
+               s.name)
     in
     expect_referent_uuid (symbol_by_name syms name)
 
   (* UUID -> codeblock option lookup *)
-  let codeblock_by_uuid (uuid : bytes) (blocks : p_block list) : p_code option =
-    let matches (b : p_block) =
+  let codeblock_by_uuid (uuid : bytes) (blocks : Util.p_block list) :
+      Util.p_code option =
+    let matches (b : Util.p_block) =
       match b.value with
-      | `Code (c : p_code) when Bytes.equal c.uuid uuid -> Some c
+      | `Code (c : Util.p_code) when Bytes.equal c.uuid uuid -> Some c
       | _ -> None
     in
     List.find_map matches blocks
 
   (* UUID -> codeblock lookup that fails if not found *)
-  let expect_uuid_codeblock uuid blocks : p_code =
+  let expect_uuid_codeblock uuid blocks : Util.p_code =
     match codeblock_by_uuid uuid blocks with
     | Some c -> c
     | None ->
         failwith
-          (Printf.sprintf "No codeblock found with uuid %s!" (b64_bytes uuid))
+          (Printf.sprintf "Bad IR: no codeblock found with uuid %s!"
+             (Util.b64_bytes uuid))
 
   (* UUID -> interval lookup (i.e. which interval has this codeblock) *)
-  let expect_containing_interval (uuid : bytes) (is : p_interval list) =
+  let expect_containing_interval (uuid : bytes) (is : Util.p_interval list) =
     List.find
-      (fun (i : p_interval) -> Option.is_some (codeblock_by_uuid uuid i.blocks))
+      (fun (i : Util.p_interval) ->
+        Option.is_some (codeblock_by_uuid uuid i.blocks))
       is
 
   (* Interval -> codeblock list filtering *)
-  let interval_codeblock_uuids (i : p_interval) =
+  let interval_codeblock_uuids (i : Util.p_interval) =
     List.filter_map
-      (fun (b : p_block) ->
-        match b.value with `Code (c : p_code) -> Some c.uuid | _ -> None)
+      (fun (b : Util.p_block) ->
+        match b.value with `Code (c : Util.p_code) -> Some c.uuid | _ -> None)
       i.blocks
 
   (* Interval -> codeblock offset finding *)
-  let interval_codeblock_offset (u : bytes) (i : p_interval) =
+  let interval_codeblock_offset (u : bytes) (i : Util.p_interval) =
     List.find_map
-      (fun (b : p_block) ->
+      (fun (b : Util.p_block) ->
         match b.value with
-        | `Code (c : p_code) ->
+        | `Code (c : Util.p_code) ->
             if Bytes.equal c.uuid u then Some b.offset else None
         | _ -> None)
       i.blocks
 
-  let expect_interval_codeblock_offset (u : bytes) (i : p_interval) =
+  let expect_interval_codeblock_offset (u : bytes) (i : Util.p_interval) =
     match interval_codeblock_offset u i with
     | Some o -> o
     | _ -> failwith "Internal error: no codeblock with uuid %s!"
+end
+
+(****************************************************************************************
+  Construction of a CFG subset representing only the target "component" function
+*)
+module CFG = struct
+  (* Internal, pre-map CFG type *)
+  type edge = bytes * bytes * edgetype
+  type cfg = edge list
 
   (* Constructs a subset-CFG for just the function we care about
      (identified by its entrypoint being the codeblock with "uuid")
   *)
-  let construct_function_cfg (cfg : p_cfg) (uuid : bytes)
-      (interval : p_interval) : cfg =
+  let construct_function_cfg (cfg : Util.p_cfg) (uuid : bytes)
+      (interval : Util.p_interval) : cfg =
     (* ASSUMPTION: A function lives entirely inside one ByteInterval
        Therefore, filter cfgedges to those pointing back towards the given interval.
      *)
     let in_interval u =
-      let interval_uuids = interval_codeblock_uuids interval in
+      let interval_uuids = Lookup.interval_codeblock_uuids interval in
       let opt = List.find_opt (Bytes.equal u) interval_uuids in
       match opt with Some _ -> true | _ -> false
     in
     let relevant_edges =
-      List.filter (fun (e : p_cfgedge) -> in_interval e.target_uuid) cfg.edges
+      List.filter
+        (fun (e : Util.p_cfgedge) -> in_interval e.target_uuid)
+        cfg.edges
     in
 
     (* Follow calls-and-returns back to the original function. *)
@@ -128,7 +146,7 @@ module Lifter = struct
         | Type_Syscall -> Type_Sysret
         | _ -> failwith "Internal error: bad edge type."
       in
-      let matching_edge (e : p_cfgedge) =
+      let matching_edge (e : Util.p_cfgedge) =
         if Bytes.equal e.source_uuid uuid then
           match e.label with
           | Some l when l.type' == relevant_returntype -> Some e.target_uuid
@@ -141,7 +159,7 @@ module Lifter = struct
     (* Is this cfgedge coming from a source-block-uuid that we've currently collected?
        If so, make an edge in the sub-CFG, including the correct type (linear vs call)
      *)
-    let from_source_block (u : bytes) (e : p_cfgedge) =
+    let from_source_block (u : bytes) (e : Util.p_cfgedge) =
       if Bytes.equal e.source_uuid u then
         match e.label with
         | Some l when l.type' == Type_Branch || l.type' == Type_Fallthrough ->
@@ -164,7 +182,7 @@ module Lifter = struct
 
     (* Get a list of "next" edges, add it to the current cfg, and if we gained edges, then recurse. *)
     let rec traverse_until_fixpoint (u : cfg) : cfg =
-      let next = u @ flatmap find_following_edges u in
+      let next = u @ Util.flatmap find_following_edges u in
       if List.compare_lengths u next == 0 then u
       else traverse_until_fixpoint next
     in
@@ -181,11 +199,16 @@ module Lifter = struct
       | i, o, t -> if Bytes.equal i uuid then Some (o, t) else None
     in
     List.filter_map matches cfg
+end
 
+(****************************************************************************************
+  Filtering and unpacking JSON semantic data from ASLi
+*)
+module Aux = struct
   (* AuxData/Semantics helpers *)
-  let parse_semantics (as' : p_aux list) =
+  let parse_semantics (as' : Util.p_aux list) =
     List.map
-      (fun (a : p_aux) -> Yojson.Safe.from_string (Bytes.to_string a.data))
+      (fun (a : Util.p_aux) -> Yojson.Safe.from_string (Bytes.to_string a.data))
       as'
 
   let find_for_blocks (us : bytes list) (js : Yojson.Safe.t list) =
@@ -200,7 +223,7 @@ module Lifter = struct
     in
 
     (* Check that a base64-encoded json uuid matches a straight bytestring uuid *)
-    let json_uuid_check s u = String.equal s (b64_bytes u) in
+    let json_uuid_check s u = String.equal s (Util.b64_bytes u) in
 
     (* Unpacks js as a list of json dictionaries and applies f to each key/value pair *)
     let unpack_dict (f : (string * Yojson.Safe.t) list -> _ option)
@@ -242,7 +265,7 @@ module Lifter = struct
           failwith
             (Printf.sprintf
                "Bad IR: no semantic information present for this block %s!"
-               (b64_bytes u))
+               (Util.b64_bytes u))
       | _ ->
           failwith
             (Printf.sprintf
@@ -252,75 +275,77 @@ module Lifter = struct
 
     (* make map-ish for uuid -> list of list of string *)
     List.map (fun u -> (u, sem_of_uuid u)) us
-
-  (* IR helpers / aka main Lifter entrypoint *)
-  let parse (ir : p_ir) (component : string) (verb : bool) =
-    let modules = ir.modules in
-    let cfg =
-      match ir.cfg with Some c -> c | _ -> failwith "Bad IR: no CFG found!"
-    in
-    let sections = flatmap (fun (m : p_module) -> m.sections) modules in
-    let auxs = flatmap (fun (m : p_module) -> m.aux_data) modules in
-    let symbols = flatmap (fun (m : p_module) -> m.symbols) modules in
-    let intervals =
-      flatmap (fun (s : p_section) -> s.byte_intervals) sections
-    in
-
-    let json_semantics =
-      match
-        parse_semantics
-          (List.filter_map
-             (fun (a : string * p_aux option) ->
-               match a with k, v when String.equal k "ast" -> v | _ -> None)
-             auxs)
-      with
-      | [] -> failwith "Bad IR: no semantics found!"
-      | l -> l
-    in
-
-    let () = if verb then print_endline "[!] Successfully read IR..." in
-
-    (* mainline reading-stuff *)
-    let component_block_uuid = symbol_to_uuid symbols component in
-    let component_interval =
-      expect_containing_interval component_block_uuid intervals
-    in
-    let component_cfg =
-      construct_function_cfg cfg component_block_uuid component_interval
-    in
-
-    let () =
-      if verb then
-        print_endline
-          (Printf.sprintf "[!] Constructed CFG for function %s..." component)
-    in
-
-    let component_codeblock_uuids = unpack_uuids component_cfg in
-    let block_semantics =
-      find_for_blocks component_codeblock_uuids json_semantics
-    in
-
-    let () =
-      if verb then
-        print_endline
-          (Printf.sprintf
-             "[!] Found semantic information for %i instructions..."
-             (List.fold_left
-                (fun c (_, l) -> c + List.length l)
-                0 block_semantics))
-    in
-
-    List.fold_left
-      (fun map (sem : bytes * string list list) ->
-        match sem with
-        | u, s ->
-            let block =
-              {
-                outgoing_edges = cfg_by_block u component_cfg;
-                block_semantics = s;
-                offset = expect_interval_codeblock_offset u component_interval;
-              }
-            in
-            Blocks.add u block map)
-      Blocks.empty block_semantics
 end
+
+(****************************************************************************************
+  Main Lifter interface
+*)
+let parse (ir : Util.p_ir) (component : string) (verb : bool) =
+  let modules = ir.modules in
+  let cfg =
+    match ir.cfg with Some c -> c | _ -> failwith "Bad IR: no CFG found!"
+  in
+  let sections = Util.flatmap (fun (m : Util.p_module) -> m.sections) modules in
+  let auxs = Util.flatmap (fun (m : Util.p_module) -> m.aux_data) modules in
+  let symbols = Util.flatmap (fun (m : Util.p_module) -> m.symbols) modules in
+  let intervals =
+    Util.flatmap (fun (s : Util.p_section) -> s.byte_intervals) sections
+  in
+
+  let json_semantics =
+    match
+      Aux.parse_semantics
+        (List.filter_map
+           (fun (a : string * Util.p_aux option) ->
+             match a with k, v when String.equal k "ast" -> v | _ -> None)
+           auxs)
+    with
+    | [] -> failwith "Bad IR: no semantics found!"
+    | l -> l
+  in
+
+  let () = if verb then print_endline "[!] Successfully parsed IR..." in
+
+  (* mainline reading-stuff *)
+  let component_block_uuid = Lookup.symbol_to_uuid symbols component in
+  let component_interval =
+    Lookup.expect_containing_interval component_block_uuid intervals
+  in
+  let component_cfg =
+    CFG.construct_function_cfg cfg component_block_uuid component_interval
+  in
+
+  let () =
+    if verb then
+      print_endline
+        (Printf.sprintf "[!] Constructed CFG for function %s..." component)
+  in
+
+  let component_codeblock_uuids = CFG.unpack_uuids component_cfg in
+  let block_semantics =
+    Aux.find_for_blocks component_codeblock_uuids json_semantics
+  in
+
+  let () =
+    if verb then
+      print_endline
+        (Printf.sprintf "[!] Found semantic information for %i instructions..."
+           (List.fold_left
+              (fun c (_, l) -> c + List.length l)
+              0 block_semantics))
+  in
+
+  List.fold_left
+    (fun map (sem : bytes * string list list) ->
+      match sem with
+      | u, s ->
+          let block =
+            {
+              outgoing_edges = CFG.cfg_by_block u component_cfg;
+              block_semantics = s;
+              offset =
+                Lookup.expect_interval_codeblock_offset u component_interval;
+            }
+          in
+          Blocks.add u block map)
+    Blocks.empty block_semantics

@@ -1,7 +1,5 @@
 open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
-open Lifter
-open Datalog
 
 (* Argument parsing *)
 let component = ref "main"
@@ -39,7 +37,7 @@ let read_gts filename =
   | Ok a -> a
   | Error e ->
       failwith
-        (Printf.sprintf "Could not reply request: %s"
+        (Printf.sprintf "Bad IR: could not reply request: %s"
            (Ocaml_protoc_plugin.Result.show_error e))
 
 (* MAIN *)
@@ -53,6 +51,12 @@ let () =
   let (block_semantics : Lifter.blockdata Lifter.Blocks.t) =
     Lifter.parse ir !component !verb
   in
+
+  let count = Lifter.Blocks.cardinal block_semantics in
+  print_endline
+    (Printf.sprintf "[!] Extracted %i basic block%s from %s..." count
+       (if count == 1 then "" else "s")
+       !component);
 
   let (reorderable_pairs : Datalog.pairs) =
     Datalog.compute_reorderable_pairs block_semantics !verb
