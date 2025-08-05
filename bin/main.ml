@@ -50,7 +50,12 @@ let () =
     exit 1);
 
   let ir = read_gts !input_gts in
-  let block_semantics = Lifter.parse ir !component !verb in
+  let (block_semantics : Lifter.blockdata Lifter.Blocks.t) =
+    Lifter.parse ir !component !verb
+  in
 
-  Datalog.pairs;
-  ignore block_semantics
+  let (reorderable_pairs : Datalog.pairs) =
+    Datalog.compute_reorderable_pairs block_semantics !verb
+  in
+
+  ignore reorderable_pairs
