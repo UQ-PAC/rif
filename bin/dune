@@ -2,4 +2,4 @@
  (public_name rif)
  (name main)
  (libraries rif yojson base64 datalog datalog.caml_interface)
- (modules main lifter datalog))
+ (modules main lifter datalog semantics util))

@@ -58,7 +58,7 @@ let () =
        (if count == 1 then "" else "s")
        !component);
 
-  let (reorderable_pairs : Datalog.pairs) =
+  let reorderable_pairs =
     Datalog.compute_reorderable_pairs block_semantics !verb
   in
 

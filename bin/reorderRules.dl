@@ -1,0 +1,14 @@
+% Construct the ordinary execution order
+% Input facts needed:
+%  - instruction_order for each adjacent instruction in a block
+%  - block_order for all blocks
+%  - instruction_in_block for all instructions and their blocks
+
+% Ensure instruction-ordering inside a block is transitive
+instruction_order(A,C) :- instruction_order(A,B), instruction_order(B,C).
+
+% Create execution order from instruction order plus block order
+execution_order(A,B) :- instruction_in_block(A,C), instruction_in_block(C,D), block_order(C,D).
+execution_order(A,B) :- instruction_order(A,B).
+
+

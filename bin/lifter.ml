@@ -1,9 +1,10 @@
 (****************************************************************************************
   Utilities and aiases for the Lifter interface
 *)
+open Util
+
 module Util = struct
   let flatmap f ls = List.flatten @@ List.map f ls
-  let b64_bytes b = Base64.encode_exn @@ Bytes.to_string @@ b
 
   (* Protobuf types, shouldn't be needed outside *)
   type p_ir = Rif.IR.Gtirb.Proto.IR.t
@@ -15,10 +16,6 @@ module Util = struct
   type p_interval = Rif.ByteInterval.Gtirb.Proto.ByteInterval.t
   type p_block = Rif.ByteInterval.Gtirb.Proto.Block.t
   type p_code = Rif.CodeBlock.Gtirb.Proto.CodeBlock.t
-  type p_data = Rif.DataBlock.Gtirb.Proto.DataBlock.t
-  type p_symexprs = Rif.SymbolicExpression.Gtirb.Proto.SymbolicExpression.t
-  type p_addrconst = Rif.SymbolicExpression.Gtirb.Proto.SymAddrConst.t
-  type p_seattr = Rif.SymbolicExpression.Gtirb.Proto.SymAttribute.t
   type p_aux = Rif.AuxData.Gtirb.Proto.AuxData.t
 end
 
@@ -71,15 +68,6 @@ module Lookup = struct
       | _ -> None
     in
     List.find_map matches blocks
-
-  (* UUID -> codeblock lookup that fails if not found *)
-  let expect_uuid_codeblock uuid blocks : Util.p_code =
-    match codeblock_by_uuid uuid blocks with
-    | Some c -> c
-    | None ->
-        failwith
-          (Printf.sprintf "Bad IR: no codeblock found with uuid %s!"
-             (Util.b64_bytes uuid))
 
   (* UUID -> interval lookup (i.e. which interval has this codeblock) *)
   let expect_containing_interval (uuid : bytes) (is : Util.p_interval list) =
@@ -223,7 +211,7 @@ module Aux = struct
     in
 
     (* Check that a base64-encoded json uuid matches a straight bytestring uuid *)
-    let json_uuid_check s u = String.equal s (Util.b64_bytes u) in
+    let json_uuid_check s u = String.equal s (b64_bytes u) in
 
     (* Unpacks js as a list of json dictionaries and applies f to each key/value pair *)
     let unpack_dict (f : (string * Yojson.Safe.t) list -> _ option)
@@ -265,7 +253,7 @@ module Aux = struct
           failwith
             (Printf.sprintf
                "Bad IR: no semantic information present for this block %s!"
-               (Util.b64_bytes u))
+               (b64_bytes u))
       | _ ->
           failwith
             (Printf.sprintf
