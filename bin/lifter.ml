@@ -199,7 +199,7 @@ end = struct
 
   (****************************************************************************************
   Filtering and unpacking JSON semantic data from ASLi
-*)
+  *)
   module Aux = struct
     (* AuxData/Semantics helpers *)
     let parse_semantics (as' : p_aux list) =
@@ -304,6 +304,12 @@ end = struct
 
     (* mainline reading-stuff *)
     let component_block_uuid = Lookup.symbol_to_uuid symbols component in
+    let () =
+      if verb then
+        print_endline
+          (Printf.sprintf "[!] Found entrypoint basic block %s..."
+             (b64_bytes component_block_uuid))
+    in
     let component_interval =
       Lookup.expect_containing_interval component_block_uuid intervals
     in

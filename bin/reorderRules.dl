@@ -1,4 +1,4 @@
-% Construct the ordinary execution order
+% Construct the "ordinary" execution order
 % Input facts needed:
 %  - instruction_order for each adjacent instruction in a block
 %  - block_order for all blocks
