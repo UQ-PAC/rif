@@ -1,19 +1,28 @@
 (****************************************************************************************
-  Wrapper around GTIRB/GTS serialised data
+  Wrapper around GTIRB serialised data, ASLp parsing, etc. Basically all the binary stuff.
 *)
 open Util
 
 module Lifter : sig
   module Blocks : Map.S with type key = bytes
 
+  type var = Register of int | PC | SP | PSTATE
+
+  type instruction_summary = {
+    read : var list;
+    write : var list;
+    addr : var list;
+    fence : bool;
+  }
+
   type edgetype = Linear | Call | Entry
   type outgoing_edge = bytes * edgetype
-  type instruction_semantics = string list
 
   type blockdata = {
-    outgoing_edges : outgoing_edge list;
-    block_semantics : instruction_semantics list;
+    name : string;
     offset : int;
+    outgoing_edges : outgoing_edge list;
+    block_semantics : (int * instruction_summary) list;
   }
 
   val parse : Rif.IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
@@ -23,22 +32,37 @@ end = struct
   type p_cfg = Rif.CFG.Gtirb.Proto.CFG.t
   type p_cfgedge = Rif.CFG.Gtirb.Proto.Edge.t
   type p_module = Rif.Module.Gtirb.Proto.Module.t
+  type p_bo = Rif.Module.Gtirb.Proto.ByteOrder.t
   type p_symbol = Rif.Symbol.Gtirb.Proto.Symbol.t
   type p_section = Rif.Section.Gtirb.Proto.Section.t
   type p_interval = Rif.ByteInterval.Gtirb.Proto.ByteInterval.t
   type p_block = Rif.ByteInterval.Gtirb.Proto.Block.t
   type p_code = Rif.CodeBlock.Gtirb.Proto.CodeBlock.t
-  type p_aux = Rif.AuxData.Gtirb.Proto.AuxData.t
+  type var = Register of int | PC | SP | PSTATE
 
-  (* See lifter.mli *)
+  type instruction_summary = {
+    read : var list;
+    write : var list;
+    addr : var list;
+    fence : bool;
+  }
+
+  let varEq a b =
+    match (a, b) with
+    | PC, PC -> true
+    | SP, SP -> true
+    | PSTATE, PSTATE -> true
+    | Register ai, Register bi -> ai == bi
+    | _, _ -> false
+
   type edgetype = Linear | Call | Entry
   type outgoing_edge = bytes * edgetype
-  type instruction_semantics = string list
 
   type blockdata = {
-    outgoing_edges : outgoing_edge list;
-    block_semantics : instruction_semantics list;
+    name : string;
     offset : int;
+    outgoing_edges : outgoing_edge list;
+    block_semantics : (int * instruction_summary) list;
   }
 
   module Blocks = Map.Make (Bytes)
@@ -70,21 +94,20 @@ end = struct
       expect_referent_uuid (symbol_by_name syms name)
 
     (* UUID -> codeblock option lookup *)
-    let codeblock_by_uuid (uuid : bytes) (blocks : p_block list) : p_code option
-        =
+    let codeblock_by_uuid (uuid : bytes) (blocks : p_block list) :
+        (int * p_code) option =
       let matches (b : p_block) =
         match b.value with
-        | `Code (c : p_code) when Bytes.equal c.uuid uuid -> Some c
+        | `Code (c : p_code) when Bytes.equal c.uuid uuid -> Some (b.offset, c)
         | _ -> None
       in
       List.find_map matches blocks
 
-    (* UUID -> interval lookup (i.e. which interval has this codeblock) *)
-    let expect_containing_interval (uuid : bytes) (is : p_interval list) =
-      List.find
-        (fun (i : p_interval) ->
-          Option.is_some (codeblock_by_uuid uuid i.blocks))
-        is
+    let expect_codeblock_by_uuid (uuid : bytes) (blocks : p_block list) :
+        int * p_code =
+      match codeblock_by_uuid uuid blocks with
+      | Some r -> r
+      | None -> failwith "Internal error :("
 
     (* Interval -> codeblock list filtering *)
     let interval_codeblock_uuids (i : p_interval) =
@@ -92,21 +115,6 @@ end = struct
         (fun (b : p_block) ->
           match b.value with `Code (c : p_code) -> Some c.uuid | _ -> None)
         i.blocks
-
-    (* Interval -> codeblock offset finding *)
-    let interval_codeblock_offset (u : bytes) (i : p_interval) =
-      List.find_map
-        (fun (b : p_block) ->
-          match b.value with
-          | `Code (c : p_code) ->
-              if Bytes.equal c.uuid u then Some b.offset else None
-          | _ -> None)
-        i.blocks
-
-    let expect_interval_codeblock_offset (u : bytes) (i : p_interval) =
-      match interval_codeblock_offset u i with
-      | Some o -> o
-      | _ -> failwith "Internal error: no codeblock with uuid %s!"
   end
 
   (****************************************************************************************
@@ -178,7 +186,7 @@ end = struct
 
       (* Get a list of "next" edges, add it to the current cfg, and if we gained edges, then recurse. *)
       let rec traverse_until_fixpoint (u : cfg) : cfg =
-        let next = u @ Util.flatmap find_following_edges u in
+        let next = u @ List.concat_map find_following_edges u in
         if List.compare_lengths u next == 0 then u
         else traverse_until_fixpoint next
       in
@@ -198,158 +206,184 @@ end = struct
   end
 
   (****************************************************************************************
-  Filtering and unpacking JSON semantic data from ASLi
+  Creating and filtering semantic data from ASLp
   *)
-  module Aux = struct
-    (* AuxData/Semantics helpers *)
-    let parse_semantics (as' : p_aux list) =
-      List.map
-        (fun (a : p_aux) -> Yojson.Safe.from_string (Bytes.to_string a.data))
-        as'
+  let opcode_length = 4
 
-    let find_for_blocks (us : bytes list) (js : Yojson.Safe.t list) =
-      (* Drops any input except a list of strings *)
-      let single_instruction (j : Yojson.Safe.t) =
-        match j with
-        | `List ls ->
-            List.filter_map
-              (fun l -> match l with `String s -> Some s | _ -> None)
-              ls
-        | _ -> []
-      in
+  module Semantics = struct
+    module Asl_lib = struct
+      open LibASL
 
-      (* Check that a base64-encoded json uuid matches a straight bytestring uuid *)
-      let json_uuid_check s u = String.equal s (b64_bytes u) in
+      let mkReg s = Register (int_of_string s)
 
-      (* Unpacks js as a list of json dictionaries and applies f to each key/value pair *)
-      let unpack_dict (f : (string * Yojson.Safe.t) list -> _ option)
-          (js : Yojson.Safe.t list) =
-        List.filter_map
-          (fun (j : Yojson.Safe.t) ->
-            match j with `Assoc al -> f al | _ -> None)
-          js
-      in
+      (*
+        useful refs
+        https://github.com/UQ-PAC/aslp/blob/partial_eval/libASL/symbolic.ml#L981
+    *)
+      class collector =
+        object (this)
+          inherit Asl_visitor.nopAslVisitor
 
-      (* Finds the key/value pair where the key is a b64 representation of the bytes u
+          val mutable gathered_facts : instruction_summary =
+            { read = []; write = []; addr = []; fence = false }
 
-         ^ Find, not map, because the JSON spec ensures that dictionary keys are unique.
-       *)
-      let find_matching_uuid u dict =
-        List.find_map
-          (fun (a : string * Yojson.Safe.t) ->
-            match a with s, k when json_uuid_check s u -> Some k | _ -> None)
-          dict
-      in
+          method get = gathered_facts
 
-      (* unpacks j as a json list and applies f to each element *)
-      let unpack_list (f : Yojson.Safe.t -> _) (j : Yojson.Safe.t) =
-        match j with `List ls -> List.map f ls | _ -> []
-      in
+          (* track whether we're doing children of a memory-indexing function *)
+          val mutable sub_addr = false
 
-      (* Find up to one block^ with matching UUID in each semantic JSON bundle.
-         Unpack that block as a JSON list and drop any decode errors,
-         ending up with a list of opcode sematics (list of list of string ASL statements)
+          (* maintain uniqueness in our gathered facts *)
+          method addReadReg (v : var) =
+            match List.find_opt (varEq v) gathered_facts.read with
+            | None ->
+                gathered_facts <-
+                  { gathered_facts with read = v :: gathered_facts.read }
+            | _ -> ()
 
-         Sanity check that we only had one matching UUID
-         (i.e. there aren't duplicate UUIDs cross-module)
-      *)
-      let sem_of_uuid u =
-        let uuid_blocks = unpack_dict (find_matching_uuid u) js in
-        match uuid_blocks with
-        | [ one ] -> unpack_list single_instruction one
-        | [] ->
-            failwith
-              (Printf.sprintf
-                 "Bad IR: no semantic information present for this block %s!"
-                 (b64_bytes u))
-        | _ ->
-            failwith
-              (Printf.sprintf
-                 "Bad IR: found multiple (%i) semantic blocks for this uuid!"
-                 (List.length uuid_blocks))
-      in
+          method addWriteReg (v : var) =
+            match List.find_opt (varEq v) gathered_facts.write with
+            | None ->
+                gathered_facts <-
+                  { gathered_facts with write = v :: gathered_facts.write }
+            | _ -> ()
 
-      (* make map-ish for uuid -> list of list of string *)
-      List.map (fun u -> (u, sem_of_uuid u)) us
+          method addAddrReg (v : var) =
+            match List.find_opt (varEq v) gathered_facts.addr with
+            | None ->
+                gathered_facts <-
+                  { gathered_facts with addr = v :: gathered_facts.addr }
+            | _ -> ()
+
+          method! vstmt s =
+            sub_addr <- false;
+            (match s with
+            (* Assign to register, stack pointer, program counter, or PSTATE *)
+            | Stmt_Assign
+                (LExpr_Array (LExpr_Var (Ident n), Expr_LitInt i), _, _)
+              when String.equal n "_R" ->
+                this#addWriteReg (mkReg i)
+            | Stmt_Assign (LExpr_Var (Ident n), _, _)
+              when String.equal n "SP_EL0" ->
+                this#addWriteReg SP
+            | Stmt_Assign (LExpr_Var (Ident n), _, _) when String.equal n "_PC"
+              ->
+                this#addWriteReg PC
+            | Stmt_Assign (LExpr_Field (LExpr_Var (Ident n), _), _, _)
+              when String.equal n "PSTATE" ->
+                this#addWriteReg PSTATE
+            (* Calls to memory-affecting functions; mark it *)
+            | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.set.0" ->
+                sub_addr <- true
+            | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.read.0" ->
+                sub_addr <- true
+            | _ -> ());
+            DoChildren
+
+          method! vexpr e =
+            match e with
+            (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
+             otherwise, collect as normally read registers *)
+            | Expr_TApply (Ident n, _, _) when String.equal n "Mem.set.0" ->
+                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
+            | Expr_TApply (Ident n, _, _) when String.equal n "Mem.read.0" ->
+                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
+            | _ when sub_addr ->
+                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
+            | _ ->
+                ignore (this#exprAction e);
+                DoChildren
+
+          method exprAction ?(action = this#addReadReg) e =
+            match e with
+            (* Access of register, stack pointer, program counter, or PSTATE *)
+            | Expr_Array (Expr_Var (Ident n), Expr_LitInt i)
+              when String.equal n "_R" ->
+                action (mkReg i);
+                e
+            | Expr_Var (Ident n) when String.equal n "SP_EL0" ->
+                action SP;
+                e
+            | Expr_Var (Ident n) when String.equal n "_PC" ->
+                action PC;
+                e
+            | Expr_Field (Expr_Var (Ident n), _) when String.equal n "PSTATE" ->
+                action PSTATE;
+                e
+            | _ -> e
+
+          (* Nothing for LExprs yet *)
+          method! vlexpr _ = DoChildren
+        end
+
+      let collapse (ss : Asl_ast.stmt list) : instruction_summary =
+        let c = new collector in
+        ignore (Asl_visitor.visit_stmts c ss);
+        c#get
+    end
+
+    let lift_block_from_interval (endianness : bool) (cblock : p_code)
+        (i : p_interval) : (int * instruction_summary) list =
+      ignore endianness;
+      ignore cblock;
+      ignore i;
+      ignore opcode_length;
+      []
   end
 
   (****************************************************************************************
   Main Lifter interface
-*)
+  *)
   let parse (ir : p_ir) (component : string) (verb : bool) =
     let modules = ir.modules in
+    let symbols = List.concat_map (fun (m : p_module) -> m.symbols) modules in
     let cfg =
       match ir.cfg with Some c -> c | _ -> failwith "Bad IR: no CFG found!"
     in
-    let sections = Util.flatmap (fun (m : p_module) -> m.sections) modules in
-    let auxs = Util.flatmap (fun (m : p_module) -> m.aux_data) modules in
-    let symbols = Util.flatmap (fun (m : p_module) -> m.symbols) modules in
-    let intervals =
-      Util.flatmap (fun (s : p_section) -> s.byte_intervals) sections
-    in
 
-    let json_semantics =
-      match
-        Aux.parse_semantics
-          (List.filter_map
-             (fun (a : string * p_aux option) ->
-               match a with k, v when String.equal k "ast" -> v | _ -> None)
-             auxs)
-      with
-      | [] -> failwith "Bad IR: no semantics found!"
-      | l -> l
-    in
-
-    let () = if verb then print_endline "[!] Successfully parsed IR..." in
-
-    (* mainline reading-stuff *)
     let component_block_uuid = Lookup.symbol_to_uuid symbols component in
-    let () =
-      if verb then
-        print_endline
-          (Printf.sprintf "[!] Found entrypoint basic block %s..."
-             (b64_bytes component_block_uuid))
-    in
-    let component_interval =
-      Lookup.expect_containing_interval component_block_uuid intervals
-    in
-    let component_cfg =
-      CFG.construct_function_cfg cfg component_block_uuid component_interval
-    in
 
-    let () =
-      if verb then
-        print_endline
-          (Printf.sprintf "[!] Constructed CFG for function %s..." component)
-    in
+    let do_interval (mod_endian : p_bo) (i : p_interval) :
+        (bytes * blockdata) list option =
+      if Option.is_some (Lookup.codeblock_by_uuid component_block_uuid i.blocks)
+      then (
+        (* This interval has the entrypoint block. Start extracting! *)
+        let component_cfg =
+          CFG.construct_function_cfg cfg component_block_uuid i
+        in
+        if verb then print_endline "[!] Constructed component CFG...";
 
-    let component_codeblock_uuids = CFG.unpack_uuids component_cfg in
-    let block_semantics =
-      Aux.find_for_blocks component_codeblock_uuids json_semantics
-    in
+        let needs_flipping = mod_endian = LittleEndian in
 
-    let () =
-      if verb then
-        print_endline
-          (Printf.sprintf
-             "[!] Found semantic information for %i instructions..."
-             (List.fold_left
-                (fun c (_, l) -> c + List.length l)
-                0 block_semantics))
-    in
+        let do_uuid (uuid : bytes) : blockdata =
+          let offset, cblock = Lookup.expect_codeblock_by_uuid uuid i.blocks in
+          {
+            name = b64_bytes uuid;
+            offset;
+            outgoing_edges = CFG.cfg_by_block uuid component_cfg;
+            block_semantics =
+              Semantics.lift_block_from_interval needs_flipping cblock i;
+          }
+        in
 
-    List.fold_left
-      (fun map (sem : bytes * string list list) ->
-        match sem with
-        | u, s ->
-            let block =
-              {
-                outgoing_edges = CFG.cfg_by_block u component_cfg;
-                block_semantics = s;
-                offset =
-                  Lookup.expect_interval_codeblock_offset u component_interval;
-              }
-            in
-            Blocks.add u block map)
-      Blocks.empty block_semantics
+        let result =
+          List.map (fun u -> (u, do_uuid u)) (CFG.unpack_uuids component_cfg)
+        in
+
+        Some result)
+      else None
+    in
+    let do_section (mod_endian : p_bo) (s : p_section) =
+      List.find_map (do_interval mod_endian) s.byte_intervals
+    in
+    let do_module (m : p_module) =
+      List.find_map (do_section m.byte_order) m.sections
+    in
+    let extracted_info = List.find_map do_module modules in
+
+    match extracted_info with
+    | Some e ->
+        List.fold_left
+          (fun map block -> match block with u, b -> Blocks.add u b map)
+          Blocks.empty e
+    | None -> failwith "Internal error :("
 end

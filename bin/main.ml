@@ -2,6 +2,7 @@ open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
 open Lifter
 open Datalog
+open Gts
 
 (* Argument parsing *)
 let component = ref "main"

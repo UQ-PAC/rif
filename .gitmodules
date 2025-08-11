@@ -1,3 +1,6 @@
 [submodule "lib/gtirb"]
 	path = lib/gtirb
 	url = git@github.com:GrammaTech/gtirb.git
+[submodule "lib/gts"]
+	path = lib/gts
+	url = git@github.com:UQ-PAC/gtirb-semantics.git
