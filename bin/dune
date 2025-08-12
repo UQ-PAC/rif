@@ -1,5 +1,12 @@
 (executable
  (public_name rif)
  (name main)
- (libraries rif yojson base64 datalog datalog.caml_interface asli.libASL)
+ (libraries
+  rif
+  yojson
+  base64
+  datalog
+  datalog.caml_interface
+  asli.libASL
+  aslp_offline.pc_aarch64)
  (modules main lifter datalog util))

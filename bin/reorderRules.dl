@@ -11,4 +11,67 @@ instruction_order(A,C) :- instruction_order(A,B), instruction_order(B,C).
 execution_order(A,B) :- instruction_in_block(A,C), instruction_in_block(C,D), block_order(C,D).
 execution_order(A,B) :- instruction_order(A,B).
 
+% The lifter gives us the following relations:
+% - source_register(A,R).
+% - dest_register(A,R).
+% - load_register(A,R).
+% - store_register(A,R).
+% - control_instruction(A).
+% - fence_instruction(A).
 
+store(A) :- store_register(A,R).
+load(A) :- store_register(A,R).
+
+memOp(A) :- store(A).
+memOp(A) :- load(A).
+
+dataSourceReg(A,R) :- source_register(A,R).
+addrSourceReg(A,R) :- load_register(A,R).
+addrSourceReg(A,R) :- store_register(A,R).
+
+sourceReg(A,R) :- addrSourceReg(A,R).
+sourceReg(A,R) :- dataSourceReg(A,R).
+
+destReg(A,R) :- dest_register(A,R).
+
+carries(A,S,D) :- sourceReg(A,S), destReg(A,D), ~load_register(A,D).
+
+midMove(A,B,R) :- execution_order(A,M), execution_order(M,B), destReg(M,R).
+
+synDep(A,B,R,R) :- execution_order(A,B), destReg(A,R), sourceReg(B,R), ~midMove(A,B,R).
+synDep(A,B,S,R) :- execution_order(A,M), execution_order(M,B), synDep(A,M,S,P), synDep(M,B,Q,R), carries(M,P,Q).
+
+synAddrDep(A,B) :- memOp(A), memOp(B), addrSourceReg(B,R), synDep(A,B,X,R).
+synDataDep(A,B) :- memOp(A), store(B), dataSourceReg(B,R), synDep(A,B,X,R).
+synCtrlDep(A,B) :- execution_order(A,M), execution_order(M,B), memOp(A), memOp(B), control_instruction(M_), synDep(A,M,X,Y).
+
+% preserved program order (rdw) : write inbetween two reads cannot be reordered
+midStore(A,B,R) :- execution_order(A,M), execution_order(M,B), store_register(M,R).
+ppo_rdw(A,B) :- execution_order(A,B), load_register(A,R), load_register(B,R), midStore(A,B,R).
+
+% preserved program order (fence) : there is a fence between A and B
+ppo_fence(A,B) :- execution_order(A,M), execution_order(M,B), fence_instruction(M).
+
+% preserved program order (control) : there is a control dependency between A and B, and B is a store
+ppo_ctrl(A,B) :- store(B), synCtrlDep(A,B).
+
+% preserved program order (data / addr) : syntactic dependencies
+ppo_data(A,B) :- synDataDep(A,B).
+ppo_addr(A,B) :- synAddrDep(A,B).
+
+% preserved program order (address data) : b is a load, and there is a store m between a and b such that a depends on m
+ppo_addrdatafi(A,B) :- execution_order(A,M), execution_order(M,B), load_register(B,R), store_register(M,R), ~midStore(M,B,R), synAddrDep(A,M).
+ppo_addrdatafi(A,B) :- execution_order(A,M), execution_order(M,B), load_register(B,R), store_register(M,R), ~midStore(M,B,R), synDataDep(A,M).
+
+% preserved program order (address store) : b is a store, and something has an address dependency on A
+ppo_addrpo(A,B) :- execution_order(A,M), execution_order(M,B), store(B), synAddrDep(A,M).
+
+ppo(A,B) :- ppo_rdw(A,B).
+ppo(A,B) :- ppo_fence(A,B).
+ppo(A,B) :- ppo_ctrl(A,B).
+ppo(A,B) :- ppo_data(A,B).
+ppo(A,B) :- ppo_addr(A,B).
+ppo(A,B) :- ppo_addrdatafi(A,B).
+ppo(A,B) :- ppo_addrpo(A,B).
+
+reorderable(A,B) :- execution_order(A,B), memOp(A), memOp(B).

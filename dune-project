@@ -15,16 +15,17 @@
 
 (package
  (name rif)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (synopsis "Perform weak-memory-effect checks on a disassembled ARM64 binary.")
  (depends
    "ocaml"
+   "dune"
    ("asli" (>= 0.3.0))
+   ("aslp_client_server_ocaml" (>= 0.1.2))
    ("ocaml-protoc-plugin" (>= 6.1.0))
    ("datalog" (>= 0.7))
    "yojson"
    "base64"
  )
- (tags ("add topics" "to describe" your project))
+ (tags (decompiler static-analysis formal-methods))
 )
 

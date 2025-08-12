@@ -11,7 +11,8 @@ module Lifter : sig
   type instruction_summary = {
     read : var list;
     write : var list;
-    addr : var list;
+    load : var list;
+    store : var list;
     fence : bool;
   }
 
@@ -26,6 +27,7 @@ module Lifter : sig
   }
 
   val parse : Rif.IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
+  val varEq : var -> var -> bool
 end = struct
   (* Protobuf types, shouldn't be needed outside *)
   type p_ir = Rif.IR.Gtirb.Proto.IR.t
@@ -43,7 +45,8 @@ end = struct
   type instruction_summary = {
     read : var list;
     write : var list;
-    addr : var list;
+    load : var list;
+    store : var list;
     fence : bool;
   }
 
@@ -219,18 +222,19 @@ end = struct
       (*
         useful refs
         https://github.com/UQ-PAC/aslp/blob/partial_eval/libASL/symbolic.ml#L981
-    *)
+      *)
       class collector =
         object (this)
           inherit Asl_visitor.nopAslVisitor
 
           val mutable gathered_facts : instruction_summary =
-            { read = []; write = []; addr = []; fence = false }
+            { read = []; write = []; load = []; store = []; fence = false }
 
           method get = gathered_facts
 
           (* track whether we're doing children of a memory-indexing function *)
-          val mutable sub_addr = false
+          val mutable sub_load = false
+          val mutable sub_store = false
 
           (* maintain uniqueness in our gathered facts *)
           method addReadReg (v : var) =
@@ -247,15 +251,23 @@ end = struct
                   { gathered_facts with write = v :: gathered_facts.write }
             | _ -> ()
 
-          method addAddrReg (v : var) =
-            match List.find_opt (varEq v) gathered_facts.addr with
+          method addLoadReg (v : var) =
+            match List.find_opt (varEq v) gathered_facts.load with
             | None ->
                 gathered_facts <-
-                  { gathered_facts with addr = v :: gathered_facts.addr }
+                  { gathered_facts with load = v :: gathered_facts.load }
+            | _ -> ()
+
+          method addStoreReg (v : var) =
+            match List.find_opt (varEq v) gathered_facts.store with
+            | None ->
+                gathered_facts <-
+                  { gathered_facts with store = v :: gathered_facts.store }
             | _ -> ()
 
           method! vstmt s =
-            sub_addr <- false;
+            sub_load <- false;
+            sub_store <- false;
             (match s with
             (* Assign to register, stack pointer, program counter, or PSTATE *)
             | Stmt_Assign
@@ -273,9 +285,9 @@ end = struct
                 this#addWriteReg PSTATE
             (* Calls to memory-affecting functions; mark it *)
             | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.set.0" ->
-                sub_addr <- true
+                sub_store <- true
             | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.read.0" ->
-                sub_addr <- true
+                sub_load <- true
             | _ -> ());
             DoChildren
 
@@ -284,11 +296,15 @@ end = struct
             (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
              otherwise, collect as normally read registers *)
             | Expr_TApply (Ident n, _, _) when String.equal n "Mem.set.0" ->
-                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
+                ChangeDoChildrenPost
+                  (e, this#exprAction ~action:this#addStoreReg)
             | Expr_TApply (Ident n, _, _) when String.equal n "Mem.read.0" ->
-                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
-            | _ when sub_addr ->
-                ChangeDoChildrenPost (e, this#exprAction ~action:this#addAddrReg)
+                ChangeDoChildrenPost (e, this#exprAction ~action:this#addLoadReg)
+            | _ when sub_store ->
+                ChangeDoChildrenPost
+                  (e, this#exprAction ~action:this#addStoreReg)
+            | _ when sub_load ->
+                ChangeDoChildrenPost (e, this#exprAction ~action:this#addLoadReg)
             | _ ->
                 ignore (this#exprAction e);
                 DoChildren
@@ -319,15 +335,40 @@ end = struct
         let c = new collector in
         ignore (Asl_visitor.visit_stmts c ss);
         c#get
+
+      let lift_one_op (address : int) (op : bytes) =
+        let opcode = Primops.mkBits 32 (Z.of_int32 (Bytes.get_int32_be op 0)) in
+        (* Ignore unsupported opcodes *)
+        match OfflineASL_pc.Offline.run ~pc:address opcode with
+        | result -> result
+        | exception _ -> []
+
+      let lift_and_collapse (addr : int) (op : bytes) : instruction_summary =
+        collapse (lift_one_op addr op)
     end
 
-    let lift_block_from_interval (endianness : bool) (cblock : p_code)
-        (i : p_interval) : (int * instruction_summary) list =
-      ignore endianness;
-      ignore cblock;
-      ignore i;
-      ignore opcode_length;
-      []
+    let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)
+        (i : p_interval) (block_offset : int) : (int * instruction_summary) list
+        =
+      let endian_reverse b =
+        let len = Bytes.length b in
+        let getrev i = Bytes.get b (len - 1 - i) in
+        Bytes.init len getrev
+      in
+      let cut_opcodes contents idx =
+        let b = Bytes.sub contents (idx * opcode_length) opcode_length in
+        ( i.address + block_offset + (idx * opcode_length),
+          if mod_endianness then endian_reverse b else b )
+      in
+
+      let size = cblock.size in
+      let num_opcodes = size / opcode_length in
+      if size <> num_opcodes * opcode_length then failwith "Internal error :(";
+
+      let contents = Bytes.sub i.contents block_offset size in
+      let opcodes = List.init num_opcodes (cut_opcodes contents) in
+
+      List.map (fun (i, op) -> (i, Asl_lib.lift_and_collapse i op)) opcodes
   end
 
   (****************************************************************************************
@@ -361,7 +402,7 @@ end = struct
             offset;
             outgoing_edges = CFG.cfg_by_block uuid component_cfg;
             block_semantics =
-              Semantics.lift_block_from_interval needs_flipping cblock i;
+              Semantics.lift_block_from_interval needs_flipping cblock i offset;
           }
         in
 
