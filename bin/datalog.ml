@@ -7,7 +7,9 @@ open Lifter
 *)
 module Datalog : sig
   val compute_reorderable_pairs :
-    Lifter.blockdata Lifter.Blocks.t -> bool -> (int * int) list
+    Lifter.blockdata Lifter.Blocks.t ->
+    bool ->
+    (int * int) list * (bytes * int) list
 end = struct
   type db = DL.Logic.DB.t
 
@@ -30,6 +32,12 @@ end = struct
     let _add_rel3 db rel arg = DL.Rel3.add_list db rel [ arg ]
     let query_rel1 = DL.Rel1.find
     let query_rel2 = DL.Rel2.find
+
+    let func_rel2_int db rel arg =
+      List.find_map
+        (fun ((k1 : int), k2) -> if k1 == arg then Some k2 else None)
+        (DL.Rel2.find db rel)
+
     let reorderable = get_rel2 ~k1:DL.Univ.int ~k2:DL.Univ.int "reorderable"
 
     let instruction_order =
@@ -58,7 +66,6 @@ end = struct
 
     let control_instruction = get_rel1 ~k:DL.Univ.int "control_instruction"
     let fence_instruction = get_rel1 ~k:DL.Univ.int "fence_instruction"
-    let memop = get_rel1 ~k:DL.Univ.int "memOp"
 
     let add_instruction_order (db : db) (ins1 : int) (ins2 : int) =
       add_rel2 db instruction_order (ins1, ins2)
@@ -87,19 +94,39 @@ end = struct
     let add_fence_inst (db : db) (ins : int) = add_rel1 db fence_instruction ins
     let query_execution_order (db : db) = query_rel2 db execution_order
     let query_reorderable (db : db) = query_rel2 db reorderable
-    let _query_memop (db : db) = query_rel1 db memop
-    let query_dest_register (db : db) = query_rel2 db dest_register
   end
-
-  let regSymb (v : Lifter.var) =
-    match v with
-    | PC -> "PC"
-    | SP -> "SP"
-    | PSTATE -> "PSTATE"
-    | Register i -> "R" ^ string_of_int i
 
   let hasCtrl (i : Lifter.instruction_summary) =
     Option.is_some (List.find_opt (Lifter.varEq Lifter.PC) i.write)
+
+  let _memop_explain (db : db) =
+    let memop = Helpers.get_rel1 ~k:DL.Univ.int "memOp" in
+    List.iter
+      (fun i -> print_endline (Printf.sprintf "memOp: %i" i))
+      (Helpers.query_rel1 db memop);
+
+    let load = Helpers.get_rel1 ~k:DL.Univ.int "load" in
+    List.iter
+      (fun i -> print_endline (Printf.sprintf "load: %i" i))
+      (Helpers.query_rel1 db load);
+
+    let store = Helpers.get_rel1 ~k:DL.Univ.int "store" in
+    List.iter
+      (fun i -> print_endline (Printf.sprintf "store: %i" i))
+      (Helpers.query_rel1 db store)
+
+  let _linear_explain (db : db) =
+    let linear = Helpers.get_rel2 ~k1:DL.Univ.int ~k2:DL.Univ.int "linear" in
+
+    List.iter
+      (fun (i1, i2) ->
+        print_endline (Printf.sprintf "(%i -> %i)" i1 i2);
+        let why_ppo =
+          DL.Logic.ask db
+            (DL.Parse.term_of_string (Printf.sprintf "ppo(%i,%i)" i1 i2))
+        in
+        List.iter (fun x -> print_endline (DL.Logic.T.to_string x)) why_ppo)
+      (Helpers.query_rel2 db linear)
 
   let compute_reorderable_pairs (blocks : Lifter.blockdata Lifter.Blocks.t)
       (verb : bool) =
@@ -123,16 +150,20 @@ end = struct
 
         (* Individual instruction facts for i1; i2 happens in the next "fold" *)
         List.iter
-          (fun var -> Helpers.add_source_reg db (only_address i1) (regSymb var))
+          (fun var ->
+            Helpers.add_source_reg db (only_address i1) (Lifter.varSym var))
           (only_sem i1).read;
         List.iter
-          (fun var -> Helpers.add_dest_reg db (only_address i1) (regSymb var))
+          (fun var ->
+            Helpers.add_dest_reg db (only_address i1) (Lifter.varSym var))
           (only_sem i1).write;
         List.iter
-          (fun var -> Helpers.add_load_reg db (only_address i1) (regSymb var))
+          (fun var ->
+            Helpers.add_load_reg db (only_address i1) (Lifter.varSym var))
           (only_sem i1).load;
         List.iter
-          (fun var -> Helpers.add_store_reg db (only_address i1) (regSymb var))
+          (fun var ->
+            Helpers.add_store_reg db (only_address i1) (Lifter.varSym var))
           (only_sem i1).store;
         if (only_sem i1).fence then Helpers.add_fence_inst db (only_address i1);
         if hasCtrl (only_sem i1) then
@@ -143,22 +174,31 @@ end = struct
 
       ignore
       @@ List.fold_left gen_facts_over_instructions
-           (List.hd block.block_semantics)
-           (List.tl block.block_semantics)
+           (List.hd block.block_summary)
+           (List.tl block.block_summary)
     in
 
     Lifter.Blocks.iter (fun k v -> base_facts_for_block (b64_bytes k) v) blocks;
 
     if verb then
       print_endline
-        (Printf.sprintf "[!] Generated excecution order infers %i pairs..."
+        (Printf.sprintf "[!] Generated execution order infers %i total pairs..."
            (List.length (Helpers.query_execution_order db)));
-
-    if verb then print_int (List.length (Helpers.query_dest_register db));
 
     let reord = Helpers.query_reorderable db in
     print_endline
-      (Printf.sprintf "[!] Found %i reorderable instructions..."
-         (List.length reord));
-    reord
+      (Printf.sprintf "[!] Found %i reorderable pairs..." (List.length reord));
+
+    let instructions =
+      List.sort_uniq compare
+        (List.flatten (List.map (fun (i1, i2) -> i1 :: [ i2 ]) reord))
+    in
+    let find_block i =
+      Option.get (Helpers.func_rel2_int db Helpers.instruction_in_block i)
+    in
+    let blocks =
+      List.map (fun i -> (bytes_b64 (find_block i), i)) instructions
+    in
+
+    (reord, blocks)
 end

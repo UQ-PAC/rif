@@ -11,6 +11,10 @@ instruction_order(A,C) :- instruction_order(A,B), instruction_order(B,C).
 execution_order(A,B) :- instruction_in_block(A,C), instruction_in_block(C,D), block_order(C,D).
 execution_order(A,B) :- instruction_order(A,B).
 
+% Generate a "linear" order of instructions for debug-printing purposes
+between(A,B) :- execution_order(A,R), execution_order(R,B).
+linear(A,B) :- execution_order(A,B), ~between(A,B).
+
 % The lifter gives us the following relations:
 % - source_register(A,R).
 % - dest_register(A,R).
@@ -20,7 +24,7 @@ execution_order(A,B) :- instruction_order(A,B).
 % - fence_instruction(A).
 
 store(A) :- store_register(A,R).
-load(A) :- store_register(A,R).
+load(A) :- load_register(A,R).
 
 memOp(A) :- store(A).
 memOp(A) :- load(A).
@@ -43,7 +47,7 @@ synDep(A,B,S,R) :- execution_order(A,M), execution_order(M,B), synDep(A,M,S,P), 
 
 synAddrDep(A,B) :- memOp(A), memOp(B), addrSourceReg(B,R), synDep(A,B,X,R).
 synDataDep(A,B) :- memOp(A), store(B), dataSourceReg(B,R), synDep(A,B,X,R).
-synCtrlDep(A,B) :- execution_order(A,M), execution_order(M,B), memOp(A), memOp(B), control_instruction(M_), synDep(A,M,X,Y).
+synCtrlDep(A,B) :- execution_order(A,M), execution_order(M,B), memOp(A), memOp(B), control_instruction(M), synDep(A,M,X,Y).
 
 % preserved program order (rdw) : write inbetween two reads cannot be reordered
 midStore(A,B,R) :- execution_order(A,M), execution_order(M,B), store_register(M,R).
@@ -74,4 +78,4 @@ ppo(A,B) :- ppo_addr(A,B).
 ppo(A,B) :- ppo_addrdatafi(A,B).
 ppo(A,B) :- ppo_addrpo(A,B).
 
-reorderable(A,B) :- execution_order(A,B), memOp(A), memOp(B).
+reorderable(A,B) :- execution_order(A,B), memOp(A), memOp(B), ~ppo(A,B).

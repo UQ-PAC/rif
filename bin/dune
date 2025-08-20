@@ -9,4 +9,4 @@
   datalog.caml_interface
   asli.libASL
   aslp_offline.pc_aarch64)
- (modules main lifter datalog util))
+ (modules main lifter datalog util solver))

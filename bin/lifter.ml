@@ -6,7 +6,7 @@ open Util
 module Lifter : sig
   module Blocks : Map.S with type key = bytes
 
-  type var = Register of int | PC | SP | PSTATE
+  type var = Register of int | PC | SP | PSTATE | Global of int
 
   type instruction_summary = {
     read : var list;
@@ -23,11 +23,15 @@ module Lifter : sig
     name : string;
     offset : int;
     outgoing_edges : outgoing_edge list;
-    block_semantics : (int * instruction_summary) list;
+    block_summary : (int * instruction_summary) list;
+    block_semantics : (int * LibASL.Asl_ast.stmt list) list;
   }
 
+  val opcode_length : int
   val parse : Rif.IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
+  val all_variables : instruction_summary * instruction_summary -> var list
   val varEq : var -> var -> bool
+  val varSym : var -> string
 end = struct
   (* Protobuf types, shouldn't be needed outside *)
   type p_ir = Rif.IR.Gtirb.Proto.IR.t
@@ -40,7 +44,7 @@ end = struct
   type p_interval = Rif.ByteInterval.Gtirb.Proto.ByteInterval.t
   type p_block = Rif.ByteInterval.Gtirb.Proto.Block.t
   type p_code = Rif.CodeBlock.Gtirb.Proto.CodeBlock.t
-  type var = Register of int | PC | SP | PSTATE
+  type var = Register of int | PC | SP | PSTATE | Global of int
 
   type instruction_summary = {
     read : var list;
@@ -58,6 +62,14 @@ end = struct
     | Register ai, Register bi -> ai == bi
     | _, _ -> false
 
+  let varSym (v : var) =
+    match v with
+    | PC -> "PC"
+    | SP -> "SP"
+    | PSTATE -> "PSTATE"
+    | Register i -> "R" ^ string_of_int i
+    | Global i -> "G" ^ string_of_int i
+
   type edgetype = Linear | Call | Entry
   type outgoing_edge = bytes * edgetype
 
@@ -65,7 +77,8 @@ end = struct
     name : string;
     offset : int;
     outgoing_edges : outgoing_edge list;
-    block_semantics : (int * instruction_summary) list;
+    block_summary : (int * instruction_summary) list;
+    block_semantics : (int * LibASL.Asl_ast.stmt list) list;
   }
 
   module Blocks = Map.Make (Bytes)
@@ -128,6 +141,19 @@ end = struct
     type edge = bytes * bytes * edgetype
     type cfg = edge list
 
+    (* This module is just an easy way to enforce uniqueness among CFG edges *)
+    module Cfg = Set.Make (struct
+      type t = edge
+
+      let compare (ai, ao, _) (bi, bo, _) =
+        match compare ai bi with 0 -> compare ao bo | c -> c
+    end)
+
+    let setflatmap f s =
+      Cfg.fold
+        (fun next acc -> Cfg.union (Cfg.of_list (f next)) acc)
+        Cfg.empty s
+
     (* Constructs a subset-CFG for just the function we care about
      (identified by its entrypoint being the codeblock with "uuid")
   *)
@@ -167,7 +193,10 @@ end = struct
        If so, make an edge in the sub-CFG, including the correct type (linear vs call)
      *)
       let from_source_block (u : bytes) (e : p_cfgedge) =
-        if Bytes.equal e.source_uuid u then
+        if Bytes.equal e.source_uuid u then (
+          print_endline
+            (Printf.sprintf "Found edge from %s to %s" (b64_bytes e.source_uuid)
+               (b64_bytes u));
           match e.label with
           | Some l when l.type' == Type_Branch || l.type' == Type_Fallthrough ->
               Some [ (u, e.target_uuid, Linear) ]
@@ -176,25 +205,32 @@ end = struct
                 (List.map
                    (fun b -> (u, b, Call))
                    (call_and_return l.type' e.target_uuid))
-          | _ -> None
+          | _ -> None)
         else None
       in
 
       (* Turn a sub-CFG edge into a list of directly-connected sub-CFG edges *)
       let find_following_edges (e : edge) : edge list =
-        match e with
-        | _, t, _ ->
-            List.flatten @@ List.filter_map (from_source_block t) relevant_edges
+        let out =
+          match e with
+          | _, t, _ ->
+              List.flatten
+              @@ List.filter_map (from_source_block t) relevant_edges
+        in
+        print_int (List.length out);
+        out
       in
 
       (* Get a list of "next" edges, add it to the current cfg, and if we gained edges, then recurse. *)
-      let rec traverse_until_fixpoint (u : cfg) : cfg =
-        let next = u @ List.concat_map find_following_edges u in
-        if List.compare_lengths u next == 0 then u
-        else traverse_until_fixpoint next
+      let rec traverse_until_fixpoint (u : Cfg.t) : Cfg.t =
+        let result = setflatmap find_following_edges u in
+        let next = Cfg.union u result in
+        if Cfg.compare u next == 0 then u else traverse_until_fixpoint next
       in
 
-      traverse_until_fixpoint [ (Bytes.of_string "", uuid, Entry) ]
+      Cfg.elements
+        (traverse_until_fixpoint
+           (Cfg.singleton (Bytes.of_string "", uuid, Entry)))
 
     (* Given a constructed sub-cfg, unpack just the block UUIDs from it *)
     let unpack_uuids (cfg : cfg) : bytes list =
@@ -230,11 +266,8 @@ end = struct
           val mutable gathered_facts : instruction_summary =
             { read = []; write = []; load = []; store = []; fence = false }
 
+          val mutable taints = []
           method get = gathered_facts
-
-          (* track whether we're doing children of a memory-indexing function *)
-          val mutable sub_load = false
-          val mutable sub_store = false
 
           (* maintain uniqueness in our gathered facts *)
           method addReadReg (v : var) =
@@ -258,6 +291,8 @@ end = struct
                   { gathered_facts with load = v :: gathered_facts.load }
             | _ -> ()
 
+          method addLoadRegs (vs : var list) = List.iter this#addLoadReg vs
+
           method addStoreReg (v : var) =
             match List.find_opt (varEq v) gathered_facts.store with
             | None ->
@@ -265,46 +300,70 @@ end = struct
                   { gathered_facts with store = v :: gathered_facts.store }
             | _ -> ()
 
+          method addStoreRegs (vs : var list) = List.iter this#addStoreReg vs
+
+          method sanityOnlyRead =
+            if
+              List.length gathered_facts.write > 0
+              || List.length gathered_facts.load > 0
+              || List.length gathered_facts.store > 0
+            then failwith "Internal error :(";
+            gathered_facts.read
+
           method! vstmt s =
-            sub_load <- false;
-            sub_store <- false;
-            (match s with
+            match s with
             (* Assign to register, stack pointer, program counter, or PSTATE *)
             | Stmt_Assign
                 (LExpr_Array (LExpr_Var (Ident n), Expr_LitInt i), _, _)
               when String.equal n "_R" ->
-                this#addWriteReg (mkReg i)
+                this#addWriteReg (mkReg i);
+                DoChildren
             | Stmt_Assign (LExpr_Var (Ident n), _, _)
               when String.equal n "SP_EL0" ->
-                this#addWriteReg SP
+                this#addWriteReg SP;
+                DoChildren
             | Stmt_Assign (LExpr_Var (Ident n), _, _) when String.equal n "_PC"
               ->
-                this#addWriteReg PC
+                this#addWriteReg PC;
+                DoChildren
             | Stmt_Assign (LExpr_Field (LExpr_Var (Ident n), _), _, _)
               when String.equal n "PSTATE" ->
-                this#addWriteReg PSTATE
+                this#addWriteReg PSTATE;
+                DoChildren
             (* Calls to memory-affecting functions; mark it *)
-            | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.set.0" ->
-                sub_store <- true
-            | Stmt_TCall (Ident n, _, _, _) when String.equal n "Mem.read.0" ->
-                sub_load <- true
-            | _ -> ());
-            DoChildren
+            | Stmt_TCall (FIdent (n, _), e1, e2, _)
+              when String.equal n "Mem.set" ->
+                let memc = new collector in
+                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
+                this#addStoreRegs memc#sanityOnlyRead;
+                SkipChildren
+            | Stmt_TCall (FIdent (n, _), e1, e2, _)
+              when String.equal n "Mem.read" ->
+                let memc = new collector in
+                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
+                this#addLoadRegs memc#sanityOnlyRead;
+                SkipChildren
+            | Stmt_TCall (Ident n, _, _, _) ->
+                print_endline n;
+                DoChildren
+            | _ -> DoChildren
 
           method! vexpr e =
             match e with
             (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
              otherwise, collect as normally read registers *)
-            | Expr_TApply (Ident n, _, _) when String.equal n "Mem.set.0" ->
-                ChangeDoChildrenPost
-                  (e, this#exprAction ~action:this#addStoreReg)
-            | Expr_TApply (Ident n, _, _) when String.equal n "Mem.read.0" ->
-                ChangeDoChildrenPost (e, this#exprAction ~action:this#addLoadReg)
-            | _ when sub_store ->
-                ChangeDoChildrenPost
-                  (e, this#exprAction ~action:this#addStoreReg)
-            | _ when sub_load ->
-                ChangeDoChildrenPost (e, this#exprAction ~action:this#addLoadReg)
+            | Expr_TApply (FIdent (n, _), e1, e2) when String.equal n "Mem.set"
+              ->
+                let memc = new collector in
+                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
+                this#addStoreRegs memc#sanityOnlyRead;
+                SkipChildren
+            | Expr_TApply (FIdent (n, _), e1, e2)
+              when String.equal n "Mem.read.0" ->
+                let memc = new collector in
+                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
+                this#addLoadRegs memc#sanityOnlyRead;
+                SkipChildren
             | _ ->
                 ignore (this#exprAction e);
                 DoChildren
@@ -342,14 +401,10 @@ end = struct
         match OfflineASL_pc.Offline.run ~pc:address opcode with
         | result -> result
         | exception _ -> []
-
-      let lift_and_collapse (addr : int) (op : bytes) : instruction_summary =
-        collapse (lift_one_op addr op)
     end
 
     let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)
-        (i : p_interval) (block_offset : int) : (int * instruction_summary) list
-        =
+        (i : p_interval) (block_offset : int) =
       let endian_reverse b =
         let len = Bytes.length b in
         let getrev i = Bytes.get b (len - 1 - i) in
@@ -368,7 +423,12 @@ end = struct
       let contents = Bytes.sub i.contents block_offset size in
       let opcodes = List.init num_opcodes (cut_opcodes contents) in
 
-      List.map (fun (i, op) -> (i, Asl_lib.lift_and_collapse i op)) opcodes
+      List.split
+        (List.map
+           (fun (i, op) ->
+             let ast = Asl_lib.lift_one_op i op in
+             ((i, ast), (i, Asl_lib.collapse ast)))
+           opcodes)
   end
 
   (****************************************************************************************
@@ -382,6 +442,10 @@ end = struct
     in
 
     let component_block_uuid = Lookup.symbol_to_uuid symbols component in
+    if verb then
+      print_endline
+        (Printf.sprintf "[!] Found entrypoint block %s"
+           (b64_bytes component_block_uuid));
 
     let do_interval (mod_endian : p_bo) (i : p_interval) :
         (bytes * blockdata) list option =
@@ -397,12 +461,15 @@ end = struct
 
         let do_uuid (uuid : bytes) : blockdata =
           let offset, cblock = Lookup.expect_codeblock_by_uuid uuid i.blocks in
+          let semantics, summary =
+            Semantics.lift_block_from_interval needs_flipping cblock i offset
+          in
           {
             name = b64_bytes uuid;
-            offset;
+            offset = offset + i.address;
             outgoing_edges = CFG.cfg_by_block uuid component_cfg;
-            block_semantics =
-              Semantics.lift_block_from_interval needs_flipping cblock i offset;
+            block_semantics = semantics;
+            block_summary = summary;
           }
         in
 
@@ -427,4 +494,20 @@ end = struct
           (fun map block -> match block with u, b -> Blocks.add u b map)
           Blocks.empty e
     | None -> failwith "Internal error :("
+
+  let all_variables (s1, s2) : var list =
+    let acc = s1.read in
+    let unseen_var acc next =
+      match List.find_opt (varEq next) acc with
+      | Some _ -> acc
+      | None -> next :: acc
+    in
+
+    let acc = List.fold_left unseen_var acc s2.read in
+    let acc = List.fold_left unseen_var acc s1.write in
+    let acc = List.fold_left unseen_var acc s2.write in
+    let acc = List.fold_left unseen_var acc s1.load in
+    let acc = List.fold_left unseen_var acc s2.load in
+    let acc = List.fold_left unseen_var acc s1.store in
+    List.fold_left unseen_var acc s2.store
 end

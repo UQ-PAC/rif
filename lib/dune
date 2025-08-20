@@ -1,6 +1,6 @@
 (library
  (name rif)
- (libraries ocaml-protoc-plugin))
+ (libraries ocaml-protoc-plugin cvc5))
 
 (rule
  (targets
