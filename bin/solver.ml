@@ -1,3 +1,4 @@
+open Cvc5
 open Lifter
 open Util
 
@@ -44,7 +45,6 @@ module Solver = struct
     let cvc_of_stmtlist = List.map cvc_of_stmt
   end
 
-  (*
   module Cvc_helpers = struct
     module Variables = Map.Make (String)
 
@@ -54,7 +54,6 @@ module Solver = struct
         (fun map var -> Variables.add (Lifter.varSym var) (make_term var) map)
         Variables.empty vs
   end
-    *)
 
   let unpack_sem (blocks : Lifter.blockdata Lifter.Blocks.t) ((b1, i1), (b2, i2))
       =
@@ -110,15 +109,16 @@ module Solver = struct
       Lifter.all_variables (unpack_sum block_semantics pair)
     in
 
-    (* let tm = TermManager.mk_tm () in
+    let tm = TermManager.mk_tm () in
     let variables = Cvc_helpers.make_global_state necessary_state tm in
+    let solver = Solver.mk_solver ~logic:"QF_BV" tm in
+    Solver.set_option solver "sygus" "true";
+    Solver.set_option solver "incremental" "false";
+    let dummy = Solver.mk_grammar solver (Array.of_list []) (Array.of_list []) in
 
+    ignore dummy;
     ignore variables;
     ignore (Asl_lib.cvc_of_stmtlist instruction_one);
     ignore (Asl_lib.cvc_of_stmtlist instruction_two);
-    *)
-    ignore instruction_one;
-    ignore instruction_two;
-    ignore necessary_state;
     true
 end
