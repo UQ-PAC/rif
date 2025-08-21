@@ -6,4 +6,4 @@
 	url = git@github.com:UQ-PAC/gtirb-semantics.git
 [submodule "lib/ocaml-cvc5"]
 	path = lib/ocaml-cvc5
-	url = git@github.com:formalsec/ocaml-cvc5.git
+	url = git@github.com:UQ-PAC/ocaml-cvc5.git

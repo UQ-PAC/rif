@@ -16,7 +16,7 @@ let speclist =
     ("--verbose", Arg.Set verb, "verbose-mode output");
   ]
 
-let usage = Printf.sprintf "Usage: %s [options] input.gts" Sys.argv.(0)
+let usage = Printf.sprintf "Usage: %s [options] input.gts\n" Sys.argv.(0)
 let argc = ref 0
 
 let args arg =

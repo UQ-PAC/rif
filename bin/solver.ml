@@ -69,7 +69,6 @@ module Solver = struct
       match access_index i2 (Lifter.Blocks.find b2 blocks).block_summary with
       | _, r -> r )
 
-  (*
   let _demo_prove =
     let tm = TermManager.mk_tm () in
     let solver = Solver.mk_solver ~logic:"LIA" tm in
@@ -97,11 +96,13 @@ module Solver = struct
     let not' = Term.mk_term_1 tm Kind.Not start_bool in
     let leq = Term.mk_term_2 tm Kind.Leq start start in
 
-    (* let g = Solver.mk_grammar solver (Array.of_list [x; y]) (Array.of_list [start; start_bool]) in*)
+    (* let g = Solver.mk_grammar solver
+      (Array.of_list []) (Array.of_list [])
+      (* (Array.of_list [x; y]) (Array.of_list [start; start_bool]) *) in *)
+
     (* Grammar.add_rules g start (Array.of_list [zero; one; x; y; plus; minus; ite]);
     Grammar.add_rules g start_bool (Array.of_list [and'; not'; leq]) *)
     ignore [zero;one;plus;minus;ite;and';not';leq;x;y]
-*)
 
   let solve block_semantics pair : bool =
     let instruction_one, instruction_two = unpack_sem block_semantics pair in
@@ -109,15 +110,9 @@ module Solver = struct
       Lifter.all_variables (unpack_sum block_semantics pair)
     in
 
-    let tm = TermManager.mk_tm () in
-    let variables = Cvc_helpers.make_global_state necessary_state tm in
-    let solver = Solver.mk_solver ~logic:"QF_BV" tm in
-    Solver.set_option solver "sygus" "true";
-    Solver.set_option solver "incremental" "false";
-    let dummy = Solver.mk_grammar solver (Array.of_list []) (Array.of_list []) in
+    (* _demo_prove; *)
 
-    ignore dummy;
-    ignore variables;
+    ignore necessary_state;
     ignore (Asl_lib.cvc_of_stmtlist instruction_one);
     ignore (Asl_lib.cvc_of_stmtlist instruction_two);
     true
