@@ -49,7 +49,9 @@ module Solver = struct
     module Variables = Map.Make (String)
 
     let make_global_state vs tm : Term.term Variables.t =
-      let make_term v = Term.mk_var_s tm (Sort.mk_bv_sort tm 64) (Lifter.varSym v) in
+      let make_term v =
+        Term.mk_var_s tm (Sort.mk_bv_sort tm 64) (Lifter.varSym v)
+      in
       List.fold_left
         (fun map var -> Variables.add (Lifter.varSym var) (make_term var) map)
         Variables.empty vs
@@ -96,14 +98,22 @@ module Solver = struct
     let not' = Term.mk_term_1 tm Kind.Not start_bool in
     let leq = Term.mk_term_2 tm Kind.Leq start start in
 
-    let g = Solver.mk_grammar solver
-      (Array.of_list [x; y]) (Array.of_list [start; start_bool]) in
+    let g =
+      Solver.mk_grammar solver
+        (Array.of_list [ x; y ])
+        (Array.of_list [ start; start_bool ])
+    in
 
-    Grammar.add_rules g start (Array.of_list [zero; one; x; y; plus; minus; ite]);
-    Grammar.add_rules g start_bool (Array.of_list [and'; not'; leq]);
+    Grammar.add_rules g start
+      (Array.of_list [ zero; one; x; y; plus; minus; ite ]);
+    Grammar.add_rules g start_bool (Array.of_list [ and'; not'; leq ]);
 
-    let max = Solver.synth_fun solver tm "max" (Array.of_list [x; y]) integer (Some g) in
-    let min = Solver.synth_fun solver tm "min" (Array.of_list [x; y]) integer None in
+    let max =
+      Solver.synth_fun solver tm "max" (Array.of_list [ x; y ]) integer (Some g)
+    in
+    let min =
+      Solver.synth_fun solver tm "min" (Array.of_list [ x; y ]) integer None
+    in
 
     let varX = Solver.declare_sygus_var solver "x" integer in
     let varY = Solver.declare_sygus_var solver "y" integer in
@@ -113,12 +123,14 @@ module Solver = struct
 
     Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Geq max_x_y varX);
     Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Geq max_x_y varY);
-    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Or
-                                        (Term.mk_term_2 tm Kind.Equal max_x_y varX)
-                                        (Term.mk_term_2 tm Kind.Equal max_x_y varY));
-    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Equal
-                                        (Term.mk_term_2 tm Kind.Add max_x_y min_x_y)
-                                        (Term.mk_term_2 tm Kind.Add varX varY));
+    Solver.add_sygus_constraint solver
+      (Term.mk_term_2 tm Kind.Or
+         (Term.mk_term_2 tm Kind.Equal max_x_y varX)
+         (Term.mk_term_2 tm Kind.Equal max_x_y varY));
+    Solver.add_sygus_constraint solver
+      (Term.mk_term_2 tm Kind.Equal
+         (Term.mk_term_2 tm Kind.Add max_x_y min_x_y)
+         (Term.mk_term_2 tm Kind.Add varX varY));
 
     let result = Solver.check_synth solver in
     print_endline (SynthResult.to_string result);

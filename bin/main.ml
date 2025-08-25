@@ -1,6 +1,5 @@
 open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
-
 open Lifter
 open Datalog
 open Util
