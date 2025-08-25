@@ -16,6 +16,7 @@ depends: [
   "datalog" {>= "0.7"}
   "yojson"
   "base64"
+  "memtrace"
   "odoc" {with-doc}
 ]
 build: [

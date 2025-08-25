@@ -1,5 +1,6 @@
 open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
+
 open Lifter
 open Datalog
 open Util
@@ -46,6 +47,7 @@ let read_gts filename =
 
 (* MAIN *)
 let () =
+  (* Memtrace.trace_if_requested ~context:"UQ-PAC/rif" (); *)
   Arg.parse speclist args usage;
   if !argc <> 1 then (
     output_string stderr usage;

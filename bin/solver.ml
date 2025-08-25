@@ -69,7 +69,7 @@ module Solver = struct
       match access_index i2 (Lifter.Blocks.find b2 blocks).block_summary with
       | _, r -> r )
 
-  let _demo_prove =
+  let _demo_prove : TermManager.tm =
     let tm = TermManager.mk_tm () in
     let solver = Solver.mk_solver ~logic:"LIA" tm in
 
@@ -96,13 +96,34 @@ module Solver = struct
     let not' = Term.mk_term_1 tm Kind.Not start_bool in
     let leq = Term.mk_term_2 tm Kind.Leq start start in
 
-    (* let g = Solver.mk_grammar solver
-      (Array.of_list []) (Array.of_list [])
-      (* (Array.of_list [x; y]) (Array.of_list [start; start_bool]) *) in *)
+    let g = Solver.mk_grammar solver
+      (Array.of_list [x; y]) (Array.of_list [start; start_bool]) in
 
-    (* Grammar.add_rules g start (Array.of_list [zero; one; x; y; plus; minus; ite]);
-    Grammar.add_rules g start_bool (Array.of_list [and'; not'; leq]) *)
-    ignore [zero;one;plus;minus;ite;and';not';leq;x;y]
+    Grammar.add_rules g start (Array.of_list [zero; one; x; y; plus; minus; ite]);
+    Grammar.add_rules g start_bool (Array.of_list [and'; not'; leq]);
+
+    let max = Solver.synth_fun solver tm "max" (Array.of_list [x; y]) integer (Some g) in
+    let min = Solver.synth_fun solver tm "min" (Array.of_list [x; y]) integer None in
+
+    let varX = Solver.declare_sygus_var solver "x" integer in
+    let varY = Solver.declare_sygus_var solver "y" integer in
+
+    let max_x_y = Term.mk_term_3 tm Kind.Apply_uf max varX varY in
+    let min_x_y = Term.mk_term_3 tm Kind.Apply_uf min varX varY in
+
+    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Geq max_x_y varX);
+    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Geq max_x_y varY);
+    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Or
+                                        (Term.mk_term_2 tm Kind.Equal max_x_y varX)
+                                        (Term.mk_term_2 tm Kind.Equal max_x_y varY));
+    Solver.add_sygus_constraint solver (Term.mk_term_2 tm Kind.Equal
+                                        (Term.mk_term_2 tm Kind.Add max_x_y min_x_y)
+                                        (Term.mk_term_2 tm Kind.Add varX varY));
+
+    let result = Solver.check_synth solver in
+    print_endline (SynthResult.to_string result);
+
+    tm (* return tm to ensure it outlives its terms *)
 
   let solve block_semantics pair : bool =
     let instruction_one, instruction_two = unpack_sem block_semantics pair in
@@ -110,7 +131,7 @@ module Solver = struct
       Lifter.all_variables (unpack_sum block_semantics pair)
     in
 
-    (* _demo_prove; *)
+    ignore _demo_prove;
 
     ignore necessary_state;
     ignore (Asl_lib.cvc_of_stmtlist instruction_one);
