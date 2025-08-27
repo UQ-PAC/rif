@@ -331,17 +331,15 @@ end = struct
                 this#addWriteReg PSTATE;
                 DoChildren
             (* Calls to memory-affecting functions; mark it *)
-            | Stmt_TCall (FIdent (n, _), e1, e2, _)
+            | Stmt_TCall (FIdent (n, _), _, addr :: values, _)
               when String.equal n "Mem.set" ->
-                let memc = new collector in
-                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
-                this#addStoreRegs memc#sanityOnlyRead;
+                this#addStoreRegs (this#subcontract addr);
+                ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
-            | Stmt_TCall (FIdent (n, _), e1, e2, _)
+            | Stmt_TCall (FIdent (n, _), _, addr :: values, _)
               when String.equal n "Mem.read" ->
-                let memc = new collector in
-                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
-                this#addLoadRegs memc#sanityOnlyRead;
+                this#addLoadRegs (this#subcontract addr);
+                ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
             | Stmt_TCall (Ident n, _, _, _) ->
                 print_endline n;
@@ -352,21 +350,24 @@ end = struct
             match e with
             (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
              otherwise, collect as normally read registers *)
-            | Expr_TApply (FIdent (n, _), e1, e2) when String.equal n "Mem.set"
-              ->
-                let memc = new collector in
-                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
-                this#addStoreRegs memc#sanityOnlyRead;
+            | Expr_TApply (FIdent (n, _), _, addr :: values)
+              when String.equal n "Mem.set" ->
+                this#addStoreRegs (this#subcontract addr);
+                ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
-            | Expr_TApply (FIdent (n, _), e1, e2)
-              when String.equal n "Mem.read.0" ->
-                let memc = new collector in
-                ignore (Asl_visitor.visit_exprs memc (e1 @ e2));
-                this#addLoadRegs memc#sanityOnlyRead;
+            | Expr_TApply (FIdent (n, _), _, addr :: values)
+              when String.equal n "Mem.read" ->
+                this#addLoadRegs (this#subcontract addr);
+                ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
             | _ ->
                 ignore (this#exprAction e);
                 DoChildren
+
+          method subcontract e =
+            let memc = new collector in
+            ignore (Asl_visitor.visit_expr memc e);
+            memc#sanityOnlyRead
 
           method exprAction ?(action = this#addReadReg) e =
             match e with
@@ -386,7 +387,7 @@ end = struct
                 e
             | _ -> e
 
-          (* Nothing for LExprs yet *)
+          (* Nothing for arbitrary LExprs *)
           method! vlexpr _ = DoChildren
         end
 
