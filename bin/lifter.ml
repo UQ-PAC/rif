@@ -253,13 +253,12 @@ end = struct
     module Asl_lib = struct
       open LibASL
 
-      let env = match Arm_env.aarch64_evaluation_environment () with
+      let env =
+        match Arm_env.aarch64_evaluation_environment () with
         | Some e -> e
         | None -> failwith "AAA"
 
-      let lift _pc op =
-        Dis.retrieveDisassembly env (Dis.build_env env) op
-
+      let lift _pc op = Dis.retrieveDisassembly env (Dis.build_env env) op
       let mkReg s = Register (int_of_string s)
 
       (*
@@ -399,7 +398,9 @@ end = struct
         (* Ignore unsupported opcodes *)
         match lift address opcode with
         | result -> result
-        | exception _ -> print_endline "error"; []
+        | exception _ ->
+            print_endline "error";
+            []
     end
 
     let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)

@@ -86,11 +86,12 @@ let () =
   in
 
   let identifiable = get_actual_instructions reorderable_pairs in
-  List.iter
-    (fun ((b1, i1), (b2, i2)) ->
-      print_endline
-        (Printf.sprintf "    Could reorder %s.%i <-> %s.%i" (b64_bytes b1) i1
-           (b64_bytes b2) i2))
-    identifiable;
+  if !verb then
+    List.iter
+      (fun ((b1, i1), (b2, i2)) ->
+        print_endline
+          (Printf.sprintf "    Could reorder %s.%i <-> %s.%i" (b64_bytes b1) i1
+             (b64_bytes b2) i2))
+      identifiable;
 
   ignore (List.map (Solver.solve all_block_semantics) identifiable)
