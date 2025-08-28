@@ -25,7 +25,6 @@
    ("datalog" (>= 0.7))
    "yojson"
    "base64"
-   "memtrace"
  )
  (tags (decompiler static-analysis formal-methods))
 )

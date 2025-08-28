@@ -253,6 +253,13 @@ end = struct
     module Asl_lib = struct
       open LibASL
 
+      let env = match Arm_env.aarch64_evaluation_environment () with
+        | Some e -> e
+        | None -> failwith "AAA"
+
+      let lift _pc op =
+        Dis.retrieveDisassembly env (Dis.build_env env) op
+
       let mkReg s = Register (int_of_string s)
 
       (*
@@ -314,30 +321,24 @@ end = struct
             match s with
             (* Assign to register, stack pointer, program counter, or PSTATE *)
             | Stmt_Assign
-                (LExpr_Array (LExpr_Var (Ident n), Expr_LitInt i), _, _)
-              when String.equal n "_R" ->
+                (LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i), _, _) ->
                 this#addWriteReg (mkReg i);
                 DoChildren
-            | Stmt_Assign (LExpr_Var (Ident n), _, _)
-              when String.equal n "SP_EL0" ->
+            | Stmt_Assign (LExpr_Var (Ident "SP_EL0"), _, _) ->
                 this#addWriteReg SP;
                 DoChildren
-            | Stmt_Assign (LExpr_Var (Ident n), _, _) when String.equal n "_PC"
-              ->
+            | Stmt_Assign (LExpr_Var (Ident "_PC"), _, _) ->
                 this#addWriteReg PC;
                 DoChildren
-            | Stmt_Assign (LExpr_Field (LExpr_Var (Ident n), _), _, _)
-              when String.equal n "PSTATE" ->
+            | Stmt_Assign (LExpr_Field (LExpr_Var (Ident "PSTATE"), _), _, _) ->
                 this#addWriteReg PSTATE;
                 DoChildren
             (* Calls to memory-affecting functions; mark it *)
-            | Stmt_TCall (FIdent (n, _), _, addr :: values, _)
-              when String.equal n "Mem.set" ->
+            | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: values, _) ->
                 this#addStoreRegs (this#subcontract addr);
                 ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
-            | Stmt_TCall (FIdent (n, _), _, addr :: values, _)
-              when String.equal n "Mem.read" ->
+            | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
                 this#addLoadRegs (this#subcontract addr);
                 ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
@@ -350,13 +351,11 @@ end = struct
             match e with
             (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
              otherwise, collect as normally read registers *)
-            | Expr_TApply (FIdent (n, _), _, addr :: values)
-              when String.equal n "Mem.set" ->
+            | Expr_TApply (FIdent ("Mem.set", _), _, addr :: values) ->
                 this#addStoreRegs (this#subcontract addr);
                 ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
-            | Expr_TApply (FIdent (n, _), _, addr :: values)
-              when String.equal n "Mem.read" ->
+            | Expr_TApply (FIdent ("Mem.read", _), _, addr :: values) ->
                 this#addLoadRegs (this#subcontract addr);
                 ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
@@ -372,17 +371,16 @@ end = struct
           method exprAction ?(action = this#addReadReg) e =
             match e with
             (* Access of register, stack pointer, program counter, or PSTATE *)
-            | Expr_Array (Expr_Var (Ident n), Expr_LitInt i)
-              when String.equal n "_R" ->
+            | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
                 action (mkReg i);
                 e
-            | Expr_Var (Ident n) when String.equal n "SP_EL0" ->
+            | Expr_Var (Ident "SP_EL0") ->
                 action SP;
                 e
-            | Expr_Var (Ident n) when String.equal n "_PC" ->
+            | Expr_Var (Ident "_PC") ->
                 action PC;
                 e
-            | Expr_Field (Expr_Var (Ident n), _) when String.equal n "PSTATE" ->
+            | Expr_Field (Expr_Var (Ident "PSTATE"), _) ->
                 action PSTATE;
                 e
             | _ -> e
@@ -397,11 +395,11 @@ end = struct
         c#get
 
       let lift_one_op (address : int) (op : bytes) =
-        let opcode = Primops.mkBits 32 (Z.of_int32 (Bytes.get_int32_be op 0)) in
+        let opcode = Printf.sprintf "0x%08lx" (Bytes.get_int32_be op 0) in
         (* Ignore unsupported opcodes *)
-        match OfflineASL_pc.Offline.run ~pc:address opcode with
+        match lift address opcode with
         | result -> result
-        | exception _ -> []
+        | exception _ -> print_endline "error"; []
     end
 
     let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)

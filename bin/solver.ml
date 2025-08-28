@@ -6,70 +6,105 @@ module Solver = struct
   module Cvc_util = struct
     module Variables = Map.Make (String)
 
-    let make_global_state tm (i1, i2) : Term.term Variables.t =
-      let make_term name = Term.mk_var_s tm (Sort.mk_bv_sort tm 64) name in
+    let make_term tm name = Term.mk_var_s tm (Sort.mk_bv_sort tm 64) name
 
-      let extract_all (i : Lifter.instruction_summary) =
+    let make_global_state tm (i1, i2) : Term.term Variables.t =
+      let extract_names (i : Lifter.instruction_summary) =
         List.map Lifter.varSym (i.read @ i.write)
         @ List.map (fun v -> "M" ^ Lifter.varSym v) (i.load @ i.store)
       in
 
       List.fold_left
-        (fun map name -> Variables.add name (make_term name) map)
+        (fun map name -> Variables.add name (make_term tm name) map)
         Variables.empty
-        (extract_all i1 @ extract_all i2)
+        (extract_names i1 @ extract_names i2)
+
+    (* adds a level of "prime" to all variables in this map
+       keeps names the same for lookup purposes *)
+    let promote_variables tm map : Term.term Variables.t =
+      Variables.fold (fun name _ acc ->
+        let prime = name ^ "'" in
+        Variables.add name (make_term tm prime) acc)
+      map Variables.empty
+
+    let find_sp map = Variables.find "SP" map
+    let find_pc map = Variables.find "PC" map
+    let find_reg map i = Variables.find ("R" ^ i) map
+    let find_mem_reg map i = Variables.find ("MR" ^ i) map
   end
 
-  module Asl_lib = struct
+  module Asl_util = struct
     open LibASL
 
     type vmap = Term.term Cvc_util.Variables.t
 
-    let regSym i = "R" ^ i
+    type node = Slice of Asl_ast.slice | LExpr of Asl_ast.lexpr | Expr of Asl_ast.expr | Addr of Asl_ast.expr | Stmt of Asl_ast.stmt | Fun of string
 
-    let cvc_of_stmtlist (tm : TermManager.tm) (vs : vmap) =
+    let unexpected (node : node) =
+      match node with
+      | Slice n -> failwith (Printf.sprintf "Internal: converting unexpected slice %s" (Utils.to_string @@ Asl_utils.PP.pp_slice n))
+      | LExpr n -> failwith (Printf.sprintf "Internal: converting unexpected lexpr %s" (Asl_utils.pp_lexpr n))
+      | Expr n -> failwith (Printf.sprintf "Internal: converting unexpected expr %s" (Asl_utils.pp_expr n))
+      | Addr n -> failwith (Printf.sprintf "Internal: converting unexpected address expr %s" (Asl_utils.pp_expr n))
+      | Stmt n -> failwith (Printf.sprintf "Internal: converting unexpected stmt %s" (Asl_utils.pp_stmt n))
+      | Fun n -> failwith (Printf.sprintf "Internal: converting unexpected function %s" n)
+
+    let cvc_of_stmtlist (tm : TermManager.tm) (fromv : vmap) (tov : vmap) =
+      let memop s = String.equal "Mem.set" s || String.equal "Mem.read" s in
+
       let cvc_of_slice (s : Asl_ast.slice) : Op.op =
         match s with
         | Slice_LoWd (Expr_LitInt l, Expr_LitInt h) ->
             Op.mk_op tm Kind.Bitvector_extract
               (Array.of_list [ int_of_string h; int_of_string l ])
-        | _ -> failwith "Internal: converting unexpected ASL slice"
+        | _ -> unexpected @@ Slice s
       in
 
       let cvc_of_lexpr (e : Asl_ast.lexpr) : Term.term =
         match e with
-        | LExpr_Var (Ident n) when String.equal n "SP_EL0" ->
-            Cvc_util.Variables.find "SP" vs
-        | LExpr_Var (Ident n) when String.equal n "_PC" ->
-            Cvc_util.Variables.find "PC" vs
-        | LExpr_Array (LExpr_Var (Ident n), Expr_LitInt i)
-          when String.equal n "_R" ->
-            Cvc_util.Variables.find (regSym i) vs
-        | _ -> failwith "Internal: converting unexpected ASL lexpr"
+        | LExpr_Var (Ident "SP_EL0") ->
+            Cvc_util.find_sp tov
+        | LExpr_Var (Ident "_PC") ->
+            Cvc_util.find_pc tov
+        | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) ->
+            Cvc_util.find_reg tov i
+        | _ -> unexpected @@ LExpr e
       in
 
       let cvc_of_function (s : string) : Kind.t =
         match s with
         | _ when String.equal s "" -> Kind.Null_term
-        | _ -> failwith "Internal: converting unexpected ASL function"
+        | _ -> unexpected @@ Fun s
       in
 
-      let rec cvc_of_expr (e : Asl_ast.expr) : Term.term =
+      let cvc_of_addr vs (e : Asl_ast.expr) : Term.term =
         match e with
+        | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
+          Cvc_util.find_mem_reg vs i
+        | _ -> unexpected @@ Addr e
+      in
+
+      let rec cvc_of_expr ?(vs = fromv) (e : Asl_ast.expr) : Term.term =
+        match e with
+        | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
+          Cvc_util.find_reg vs i
         | Expr_Var _ -> Term.mk_true tm
-        | Expr_TApply (FIdent (f, _), e1s, e2s) ->
+        | Expr_TApply (FIdent (f, _), _, es) when memop f ->
+          let addr = List.hd es in
+          let value = List.hd (List.rev es) in
+          Term.mk_term tm Kind.Equal (Array.of_list [cvc_of_addr vs addr; cvc_of_expr value])
+        | Expr_TApply (FIdent (f, _), _, es) ->
             Term.mk_term tm (cvc_of_function f)
-              (Array.of_list (List.map cvc_of_expr (e1s @ e2s)))
+              (Array.of_list (List.map cvc_of_expr es))
         | Expr_Slices (e, slices) ->
             List.fold_left
               (fun acc s ->
                 Term.mk_term_op tm (cvc_of_slice s) (Array.of_list [ acc ]))
               (cvc_of_expr e) slices
         | Expr_Field _ -> Term.mk_true tm
-        | Expr_Array _ -> Term.mk_true tm
         | Expr_LitInt _ -> Term.mk_true tm
         | Expr_LitBits _ -> Term.mk_true tm
-        | _ -> failwith "Internal: converting unexpected ASL expr"
+        | _ -> unexpected @@ Expr e
       in
 
       let cvc_of_stmt (s : Asl_ast.stmt) =
@@ -81,13 +116,16 @@ module Solver = struct
         | Stmt_VarDecl _ -> Term.mk_true tm
         | Stmt_VarDeclsNoInit _ -> Term.mk_true tm
         | Stmt_Assert _ -> Term.mk_true tm
-        | Stmt_TCall (FIdent (_f, _), e1s, e2s, _) ->
-            ignore e1s;
-            ignore e2s;
+        | Stmt_TCall (FIdent ("Mem.set", _), _, es, _) ->
+          let addr = List.hd es in
+          let value = List.hd (List.rev es) in
+          Term.mk_term tm Kind.Equal (Array.of_list [cvc_of_addr tov addr; cvc_of_expr value])
+        | Stmt_TCall (FIdent (_f, _), _, es, _) ->
+            ignore es;
             Term.mk_true tm
         | Stmt_If _ -> Term.mk_true tm
         | Stmt_Throw _ -> Term.mk_true tm
-        | _ -> failwith "Internal: converting unexpected ASL stmt"
+        | _ -> unexpected @@ Stmt s
       in
 
       List.map cvc_of_stmt
@@ -175,15 +213,17 @@ module Solver = struct
 
     let instruction_one, instruction_two = unpack_sem block_semantics pair in
 
-    let necessary_state =
-      Cvc_util.make_global_state tm (unpack_sum block_semantics pair)
-    in
+    let vars = Cvc_util.make_global_state tm (unpack_sum block_semantics pair) in
+    let vars_p = Cvc_util.promote_variables tm vars in
+    let vars_pp = Cvc_util.promote_variables tm vars_p in
+
+    Cvc_util.Variables.iter (fun n _ -> print_endline n) vars;
 
     let terms_one =
-      Asl_lib.cvc_of_stmtlist tm necessary_state instruction_one
+      Asl_util.cvc_of_stmtlist tm vars vars_p instruction_one
     in
     let terms_two =
-      Asl_lib.cvc_of_stmtlist tm necessary_state instruction_two
+      Asl_util.cvc_of_stmtlist tm vars_p vars_pp instruction_two
     in
 
     List.iter
