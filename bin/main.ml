@@ -94,4 +94,4 @@ let () =
              (b64_bytes b2) i2))
       identifiable;
 
-  ignore (List.map (Solver.solve all_block_semantics) identifiable)
+  ignore (List.map (Solver.solve ~verb:!verb all_block_semantics) identifiable)

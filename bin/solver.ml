@@ -6,35 +6,35 @@ module Solver = struct
   module Cvc_util = struct
     module Variables = Map.Make (String)
 
-    let make_term tm name = Term.mk_var_s tm (Sort.mk_bv_sort tm 64) name
+    let make_term tm srt name = Term.mk_var_s tm srt name
 
-    let make_global_state tm (i1, i2) : Term.term Variables.t =
+    let make_global_state tm srt (i1, i2) : Term.term Variables.t =
       let extract_names (i : Lifter.instruction_summary) =
         List.map Lifter.varSym (i.read @ i.write)
         @ List.map (fun v -> "M" ^ Lifter.varSym v) (i.load @ i.store)
       in
 
       List.fold_left
-        (fun map name -> Variables.add name (make_term tm name) map)
+        (fun map name -> Variables.add name (make_term tm srt name) map)
         Variables.empty
         (extract_names i1 @ extract_names i2)
 
     (* adds a level of "prime" to all variables in this map
        keeps names the same for lookup purposes *)
-    let promote_variables ?(ext = "'") tm map : Term.term Variables.t =
+    let promote_variables ?(ext = "'") tm srt map : Term.term Variables.t =
       Variables.fold
         (fun name _ acc ->
           let prime = name ^ ext in
-          Variables.add name (make_term tm prime) acc)
+          Variables.add name (make_term tm srt prime) acc)
         map Variables.empty
 
-    let middlestate_functions solver tm map inputs : Term.term Variables.t =
+    let middlestate_functions solver tm srt map inputs : Term.term Variables.t =
       Variables.fold
         (fun name _ acc ->
           let f = "f" ^ name in
           Variables.add name
             (Solver.synth_fun solver tm f (Array.of_list inputs)
-               (Sort.mk_bv_sort tm 64) None)
+               srt None)
             acc)
         map Variables.empty
 
@@ -130,12 +130,6 @@ module Solver = struct
             | _ -> unexpected @@ Addr e
           in
 
-          let extend_by_32 (t : Term.term) =
-            Term.mk_term_op tm
-              (Op.mk_op tm Kind.Bitvector_zero_extend (Array.of_list [ 32 ]))
-              (Array.of_list [ t ])
-          in
-
           let rec cvc_of_expr (e : Asl_ast.expr) : Term.term =
             match e with
             | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
@@ -154,14 +148,14 @@ module Solver = struct
                 | k ->
                     Term.mk_term tm k (Array.of_list (List.map cvc_of_expr es)))
             | Expr_Slices (e, slices) ->
-                let sliced =
+                ignore (List.map cvc_of_slice slices);
+                cvc_of_expr e
+                (* let sliced =
                   List.fold_left
                     (fun acc s ->
                       Term.mk_term_op tm (cvc_of_slice s)
                         (Array.of_list [ acc ]))
-                    (cvc_of_expr e) slices
-                in
-                extend_by_32 sliced
+                    (cvc_of_expr e) slices *)
             | Expr_Field _ -> Term.mk_true tm
             | Expr_LitInt _ -> Term.mk_true tm
             | Expr_LitBits _ -> Term.mk_true tm
@@ -230,28 +224,35 @@ module Solver = struct
       match access_index i2 (Lifter.Blocks.find b2 blocks).block_summary with
       | _, r -> r )
 
-  let solve block_semantics pair : bool =
+  let solve ~verb block_semantics pair : bool =
     let tm = TermManager.mk_tm () in
     let solver = Solver.mk_solver ~logic:"QF_BV" tm in
     Solver.set_option solver "sygus" "true";
-    Solver.set_option solver "incremental" "false";
-    let bv64 = Sort.mk_bv_sort tm 64 in
+    Solver.set_option solver "full-sygus-verify" "true";
+    Solver.set_option solver "sygus-enum" "fast";
+    Solver.set_option solver "sygus-si" "all";
+
+    if verb then (
+      Solver.set_option solver "output" "sygus";
+    );
+
+    Solver.set_option solver "incremental" "true";
+    let bv64 = Sort.mk_int_sort tm in
 
     let instruction_one, instruction_two = unpack_sem block_semantics pair in
 
     let vars =
-      Cvc_util.make_global_state tm (unpack_sum block_semantics pair)
+      Cvc_util.make_global_state tm bv64 (unpack_sum block_semantics pair)
     in
-    let vars_p = Cvc_util.promote_variables ~ext:"'" tm vars in
-    let vars_pp = Cvc_util.promote_variables ~ext:"\"" tm vars in
+    let vars_p = Cvc_util.promote_variables ~ext:"'" tm bv64 vars in
+    let vars_pp = Cvc_util.promote_variables ~ext:"\"" tm bv64 vars in
 
     let state_terms =
       List.map second (Cvc_util.Variables.bindings vars)
-      @ List.map second (Cvc_util.Variables.bindings vars_p)
       @ List.map second (Cvc_util.Variables.bindings vars_pp)
     in
     let state_funcs =
-      Cvc_util.middlestate_functions solver tm vars state_terms
+      Cvc_util.middlestate_functions solver tm bv64 vars state_terms
     in
 
     let sygus_vars =
@@ -272,7 +273,6 @@ module Solver = struct
 
     let sygus_terms =
       List.map second (Cvc_util.Variables.bindings sygus_vars)
-      @ List.map second (Cvc_util.Variables.bindings sygus_vars_p)
       @ List.map second (Cvc_util.Variables.bindings sygus_vars_pp)
     in
     let sygus_funcs =
@@ -282,15 +282,15 @@ module Solver = struct
         state_funcs
     in
 
-    let make_constraint = Solver.add_sygus_constraint solver in
-    List.iter make_constraint
-      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_vars_p instruction_one);
-    List.iter make_constraint
-      (Asl_util.cvc_of_stmtlist tm sygus_vars_p sygus_vars_pp instruction_two);
-    List.iter make_constraint
-      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_funcs instruction_two);
-    List.iter make_constraint
-      (Asl_util.cvc_of_stmtlist tm sygus_funcs sygus_vars_pp instruction_one);
+    let assume_terms =
+      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_vars_p instruction_one) @
+      (Asl_util.cvc_of_stmtlist tm sygus_vars_p sygus_vars_pp instruction_two) in
+    List.iter (Solver.add_sygus_assume solver) assume_terms;
+
+    let constraint_terms =
+      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_funcs instruction_two) @
+      (Asl_util.cvc_of_stmtlist tm sygus_funcs sygus_vars_pp instruction_one) in
+    List.iter (Solver.add_sygus_constraint solver) constraint_terms;
 
     let result = Solver.check_synth solver in
     print_endline
