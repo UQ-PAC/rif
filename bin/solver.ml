@@ -3,12 +3,15 @@ open Lifter
 open Util
 
 module Solver = struct
+  type style = Integers | BitVectors
+
   module Cvc_util = struct
     module Variables = Map.Make (String)
+    module Globals = Map.Make (String)
 
     let make_term tm srt name = Term.mk_var_s tm srt name
 
-    let make_global_state tm srt (i1, i2) : Term.term Variables.t =
+    let make_register_vars tm srt (i1, i2) : Term.term Variables.t =
       let extract_names (i : Lifter.instruction_summary) =
         List.map Lifter.varSym (i.read @ i.write)
         @ List.map (fun v -> "M" ^ Lifter.varSym v) (i.load @ i.store)
@@ -19,8 +22,13 @@ module Solver = struct
         Variables.empty
         (extract_names i1 @ extract_names i2)
 
+    let make_spec_vars tm srt gs : Term.term Globals.t =
+      List.fold_left
+        (fun map name -> Globals.add name (make_term tm srt name) map)
+        Globals.empty gs
+
     (* adds a level of "prime" to all variables in this map
-       keeps names the same for lookup purposes *)
+       keeps keys the same for lookup purposes *)
     let promote_variables ?(ext = "'") tm srt map : Term.term Variables.t =
       Variables.fold
         (fun name _ acc ->
@@ -33,8 +41,7 @@ module Solver = struct
         (fun name _ acc ->
           let f = "f" ^ name in
           Variables.add name
-            (Solver.synth_fun solver tm f (Array.of_list inputs)
-               srt None)
+            (Solver.synth_fun solver tm f (Array.of_list inputs) srt None)
             acc)
         map Variables.empty
 
@@ -42,6 +49,7 @@ module Solver = struct
     let find_pc map = Variables.find "PC" map
     let find_reg map i = Variables.find ("R" ^ i) map
     let find_mem_reg map i = Variables.find ("MR" ^ i) map
+    let find_glob map n = Globals.find n map
   end
 
   module Asl_util = struct
@@ -49,7 +57,7 @@ module Solver = struct
 
     type vmap = Term.term Cvc_util.Variables.t
 
-    type node =
+    type errnode =
       | Slice of Asl_ast.slice
       | LExpr of Asl_ast.lexpr
       | Expr of Asl_ast.expr
@@ -57,7 +65,7 @@ module Solver = struct
       | Stmt of Asl_ast.stmt
       | Fun of string
 
-    let unexpected (node : node) =
+    let unexpected (node : errnode) =
       match node with
       | Slice n ->
           failwith
@@ -117,8 +125,9 @@ module Solver = struct
 
           let cvc_of_function (s : string) : Kind.t =
             match s with
-            (* for simplicity, everything is 64bv, so ZeroExtending can be treated as a noop *)
+            (* for simplicity, everything is an int, so ZeroExtending can be treated as a noop *)
             | _ when String.equal s "ZeroExtend" -> Kind.Null_term
+            | _ when String.equal s "add_bits" -> Kind.Add
             | _ -> unexpected @@ Fun s
           in
 
@@ -210,6 +219,54 @@ module Solver = struct
       (new translator)#cvc_of_stmtlist tm fromv tov stmts
   end
 
+  module Spec = struct
+    type speclang =
+      | Term of Kind.t * speclang list
+      | Const of int
+      | Bool of bool
+      | Pre of string
+      | Post of string
+
+    let rec collect_globs s =
+      match s with
+      | Post n -> [ n ]
+      | Pre n -> [ n ]
+      | Term (_, ss) -> List.flatten @@ List.map collect_globs ss
+      | _ -> []
+
+    let rec sanity_guar_uses_posts s =
+      match s with
+      | Post _ -> failwith "Sanity check: guarantee includes a post-state?"
+      | Term (_, ss) -> List.iter sanity_guar_uses_posts ss
+      | _ -> ()
+
+    let input (r : string) (g : string) : speclang * speclang =
+      let parse s =
+        ignore s;
+        Bool true
+      in
+      let guar = parse g in
+
+      sanity_guar_uses_posts guar;
+      (parse r, guar)
+
+    let rec cvc_of_spec tm fromv tov spec =
+      let subcall = cvc_of_spec tm fromv tov in
+
+      match spec with
+      | Term (k, ts) -> Term.mk_term tm k (Array.of_list @@ List.map subcall ts)
+      | Const i -> Term.mk_int tm i
+      | Bool b -> Term.mk_bool tm b
+      | Pre s -> Cvc_util.find_glob fromv s
+      | Post s -> Cvc_util.find_glob tov s
+  end
+
+  let subset_only_mem vars : string list =
+    Cvc_util.Variables.fold
+      (fun k _ (l : string list) : string list ->
+        if Char.equal k.[0] 'M' then k :: l else l)
+      vars []
+
   let unpack_sem (blocks : Lifter.blockdata Lifter.Blocks.t) ((b1, i1), (b2, i2))
       =
     ( (match access_index i1 (Lifter.Blocks.find b1 blocks).block_semantics with
@@ -224,56 +281,77 @@ module Solver = struct
       match access_index i2 (Lifter.Blocks.find b2 blocks).block_summary with
       | _, r -> r )
 
-  let solve ~verb block_semantics pair : bool =
+  let solve ~verb block_semantics (style : style) spec pair : bool =
     let tm = TermManager.mk_tm () in
-    let solver = Solver.mk_solver ~logic:"QF_BV" tm in
+    let solver = Solver.mk_solver ~logic:"ALL" tm in
     Solver.set_option solver "sygus" "true";
     Solver.set_option solver "full-sygus-verify" "true";
     Solver.set_option solver "sygus-enum" "fast";
     Solver.set_option solver "sygus-si" "all";
 
-    if verb then (
-      Solver.set_option solver "output" "sygus";
-    );
+    if verb then Solver.set_option solver "output" "sygus";
 
     Solver.set_option solver "incremental" "true";
-    let bv64 = Sort.mk_int_sort tm in
+    let var_sort =
+      match style with
+      | Integers -> Sort.mk_int_sort tm
+      | BitVectors -> Sort.mk_bv_sort tm 64
+    in
 
     let instruction_one, instruction_two = unpack_sem block_semantics pair in
+    let rely, guarantee = spec in
 
-    let vars =
-      Cvc_util.make_global_state tm bv64 (unpack_sum block_semantics pair)
+    let inst_vars =
+      Cvc_util.make_register_vars tm var_sort (unpack_sum block_semantics pair)
     in
-    let vars_p = Cvc_util.promote_variables ~ext:"'" tm bv64 vars in
-    let vars_pp = Cvc_util.promote_variables ~ext:"\"" tm bv64 vars in
+    let spec_globs =
+      Cvc_util.make_spec_vars tm var_sort
+        (Spec.collect_globs rely @ Spec.collect_globs guarantee)
+    in
+
+    let mems = subset_only_mem inst_vars in
+
+    (*
+      inst_vars  (string->term map) -> all registers & referenced memory-locations
+      mems       (string list)      -> all referenced memory-location names
+      spec_globs (string->term map) -> all x,y program variables
+    *)
+    let inst_vars_p =
+      Cvc_util.promote_variables ~ext:"'" tm var_sort inst_vars
+    in
+    let inst_vars_pp =
+      Cvc_util.promote_variables ~ext:"\"" tm var_sort inst_vars
+    in
 
     let state_terms =
-      List.map second (Cvc_util.Variables.bindings vars)
-      @ List.map second (Cvc_util.Variables.bindings vars_pp)
+      List.map second (Cvc_util.Variables.bindings inst_vars)
+      @ List.map second (Cvc_util.Variables.bindings inst_vars_p)
+      @ List.map second (Cvc_util.Variables.bindings inst_vars_pp)
     in
     let state_funcs =
-      Cvc_util.middlestate_functions solver tm bv64 vars state_terms
+      Cvc_util.middlestate_functions solver tm var_sort inst_vars state_terms
     in
 
-    let sygus_vars =
+    let sygus_inst_vars =
       Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) bv64)
-        vars
+        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
+        inst_vars
     in
-    let sygus_vars_p =
+    let sygus_inst_vars_p =
       Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) bv64)
-        vars_p
+        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
+        inst_vars_p
     in
-    let sygus_vars_pp =
+    let sygus_inst_vars_pp =
       Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) bv64)
-        vars_pp
+        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
+        inst_vars_pp
     in
 
     let sygus_terms =
-      List.map second (Cvc_util.Variables.bindings sygus_vars)
-      @ List.map second (Cvc_util.Variables.bindings sygus_vars_pp)
+      List.map second (Cvc_util.Variables.bindings sygus_inst_vars)
+      @ List.map second (Cvc_util.Variables.bindings sygus_inst_vars_p)
+      @ List.map second (Cvc_util.Variables.bindings sygus_inst_vars_pp)
     in
     let sygus_funcs =
       Cvc_util.Variables.map
@@ -283,13 +361,18 @@ module Solver = struct
     in
 
     let assume_terms =
-      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_vars_p instruction_one) @
-      (Asl_util.cvc_of_stmtlist tm sygus_vars_p sygus_vars_pp instruction_two) in
+      Asl_util.cvc_of_stmtlist tm sygus_inst_vars sygus_inst_vars_p
+        instruction_one
+      @ Asl_util.cvc_of_stmtlist tm sygus_inst_vars_p sygus_inst_vars_pp
+          instruction_two
+    in
     List.iter (Solver.add_sygus_assume solver) assume_terms;
 
     let constraint_terms =
-      (Asl_util.cvc_of_stmtlist tm sygus_vars sygus_funcs instruction_two) @
-      (Asl_util.cvc_of_stmtlist tm sygus_funcs sygus_vars_pp instruction_one) in
+      Asl_util.cvc_of_stmtlist tm sygus_inst_vars sygus_funcs instruction_two
+      @ Asl_util.cvc_of_stmtlist tm sygus_funcs sygus_inst_vars_pp
+          instruction_one
+    in
     List.iter (Solver.add_sygus_constraint solver) constraint_terms;
 
     let result = Solver.check_synth solver in

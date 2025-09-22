@@ -25,6 +25,7 @@
    ("datalog" (>= 0.7))
    "yojson"
    "base64"
+   "angstrom"
  )
  (tags (decompiler static-analysis formal-methods))
 )

@@ -388,6 +388,19 @@ end = struct
           method! vlexpr _ = DoChildren
         end
 
+      class cleanup =
+        object (_this)
+          inherit Asl_visitor.nopAslVisitor
+
+          method! vexpr e =
+            match e with
+            | Expr_TApply (FIdent ("Mem.set", _), _, addr :: _values) ->
+                ChangeTo addr
+            | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _values) ->
+                ChangeTo addr
+            | _ -> DoChildren
+        end
+
       let collapse (ss : Asl_ast.stmt list) : instruction_summary =
         let c = new collector in
         ignore (Asl_visitor.visit_stmts c ss);
@@ -401,6 +414,10 @@ end = struct
         | exception _ ->
             print_endline "error";
             []
+
+      let convert (ss : Asl_ast.stmt list) : Asl_ast.stmt list =
+        let c = new cleanup in
+        Asl_visitor.visit_stmts c ss
     end
 
     let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)
@@ -427,7 +444,7 @@ end = struct
         (List.map
            (fun (i, op) ->
              let ast = Asl_lib.lift_one_op i op in
-             ((i, ast), (i, Asl_lib.collapse ast)))
+             ((i, Asl_lib.convert ast), (i, Asl_lib.collapse ast)))
            opcodes)
   end
 

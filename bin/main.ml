@@ -7,12 +7,24 @@ open Solver
 
 (* Argument parsing *)
 let component = ref "main"
+let style = ref "integers"
 let verb = ref false
 let input_gts = ref ""
+let rely = ref "true"
+let guar = ref "true"
 
 let speclist =
   [
     ("--function", Arg.Set_string component, "the function to be RIF-checked");
+    ( "--solver-type",
+      Arg.Set_string style,
+      "the primary 'sort' to be used by the cvc5 solver" );
+    ( "--rely",
+      Arg.Set_string rely,
+      "the rely-condition describing all other concurrent components" );
+    ( "--guar",
+      Arg.Set_string guar,
+      "the guarantee(s) this component must uphold" );
     ("--verbose", Arg.Set verb, "verbose-mode output");
   ]
 
@@ -22,6 +34,12 @@ let argc = ref 0
 let args arg =
   argc := 1 + !argc;
   match !argc with 1 -> input_gts := arg | _ -> ()
+
+let cvcstyle : Solver.style =
+  match !style with
+  | "integers" -> Solver.Integers
+  | "bitvectors" -> Solver.BitVectors
+  | _ -> failwith "Bad solver type :("
 
 (* From UQ-PAC/gtirb_semantics *)
 let read_gts filename =
@@ -57,12 +75,19 @@ let () =
     Lifter.parse ir !component !verb
   in
 
-  let count = Lifter.Blocks.cardinal all_block_semantics in
+  let specification = Solver.Spec.input !rely !guar in
+
+  let bcount = Lifter.Blocks.cardinal all_block_semantics in
+  let icount =
+    Lifter.Blocks.fold
+      (fun _ (b : Lifter.blockdata) s -> s + List.length b.block_semantics)
+      all_block_semantics 0
+  in
   print_endline
     (Printf.sprintf
-       "[!] Extracted %i basic block%s (%i instructions) from %s..." count
-       (if count == 1 then "" else "s")
-       1 !component);
+       "[!] Extracted %i basic block%s (%i instructions) from %s..." bcount
+       (if bcount == 1 then "" else "s")
+       icount !component);
 
   let reorderable_pairs =
     Datalog.compute_reorderable_pairs all_block_semantics !verb
@@ -94,4 +119,7 @@ let () =
              (b64_bytes b2) i2))
       identifiable;
 
-  ignore (List.map (Solver.solve ~verb:!verb all_block_semantics) identifiable)
+  ignore
+    (List.map
+       (Solver.solve ~verb:!verb all_block_semantics cvcstyle specification)
+       identifiable)
