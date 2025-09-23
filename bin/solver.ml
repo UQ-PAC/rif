@@ -50,6 +50,17 @@ module Solver = struct
     let find_reg map i = Variables.find ("R" ^ i) map
     let find_mem_reg map i = Variables.find ("MR" ^ i) map
     let find_glob map n = Globals.find n map
+
+    let new_solver (tm, verb) =
+      let solver = Solver.mk_solver ~logic:"ALL" tm in
+      Solver.set_option solver "sygus" "true";
+      Solver.set_option solver "full-sygus-verify" "true";
+      Solver.set_option solver "sygus-enum" "fast";
+      Solver.set_option solver "sygus-si" "all";
+      Solver.set_option solver "incremental" "true";
+
+      if verb then Solver.set_option solver "output" "sygus";
+      solver
   end
 
   module Asl_util = struct
@@ -281,55 +292,114 @@ module Solver = struct
       match access_index i2 (Lifter.Blocks.find b2 blocks).block_summary with
       | _, r -> r )
 
+  let get_uni_quant_vars l =
+    (* All universally-quantified variables, for skolem functions.
+       Note that spec_terms are not included as they're fixed to the same value as inst_terms referencing memory, so it's functionally
+       not an increase to the valid state space of the search.
+       (i.e. forall a,b s.t. a = b, finding f(a) is the same as finding f(b) ) *)
+    List.flatten
+    @@ List.map
+         (fun m -> List.map second (Cvc_util.Variables.bindings m))
+         (List.map second l)
+
+  let generate_combinations snames inames =
+    ignore snames;
+    ignore inames;
+    []
+
+  let check_in_order sp (i1, i2) (r, g) (iterms, sterms) combination =
+    ignore @@ Cvc_util.new_solver sp;
+    ignore i1;
+    ignore i2;
+    ignore r;
+    ignore g;
+    ignore @@ get_uni_quant_vars iterms;
+    ignore sterms;
+    ignore combination;
+    true
+
+  let check_out_order sp (i1, i2) (r, g) (iterms, sterms) combination =
+    ignore @@ Cvc_util.new_solver sp;
+    ignore i1;
+    ignore i2;
+    ignore r;
+    ignore g;
+    ignore @@ get_uni_quant_vars iterms;
+    ignore sterms;
+    ignore combination;
+    true
+
   let solve ~verb block_semantics (style : style) spec pair : bool =
     let tm = TermManager.mk_tm () in
-    let solver = Solver.mk_solver ~logic:"ALL" tm in
-    Solver.set_option solver "sygus" "true";
-    Solver.set_option solver "full-sygus-verify" "true";
-    Solver.set_option solver "sygus-enum" "fast";
-    Solver.set_option solver "sygus-si" "all";
+    let sp = (tm, verb) in
 
-    if verb then Solver.set_option solver "output" "sygus";
-
-    Solver.set_option solver "incremental" "true";
     let var_sort =
       match style with
       | Integers -> Sort.mk_int_sort tm
       | BitVectors -> Sort.mk_bv_sort tm 64
     in
 
-    let instruction_one, instruction_two = unpack_sem block_semantics pair in
+    let code = unpack_sem block_semantics pair in
     let rely, guarantee = spec in
 
-    let inst_vars =
+    let inst_terms =
       Cvc_util.make_register_vars tm var_sort (unpack_sum block_semantics pair)
     in
-    let spec_globs =
-      Cvc_util.make_spec_vars tm var_sort
-        (Spec.collect_globs rely @ Spec.collect_globs guarantee)
+
+    let spec_names = Spec.collect_globs rely @ Spec.collect_globs guarantee in
+    let spec_terms = Cvc_util.make_spec_vars tm var_sort spec_names in
+
+    let inst_terms_primes =
+      (0, inst_terms)
+      :: List.map
+           (fun i ->
+             ( i,
+               Cvc_util.promote_variables
+                 ~ext:("'" ^ string_of_int i)
+                 tm var_sort inst_terms ))
+           [ 1; 2; 3; 4; 5; 6; 7 ]
+    in
+    let spec_terms_primes =
+      (0, spec_terms)
+      :: List.map
+           (fun i ->
+             ( i,
+               Cvc_util.promote_variables
+                 ~ext:("'" ^ string_of_int i)
+                 tm var_sort spec_terms ))
+           [ 1; 2; 3; 4; 5; 6; 7 ]
     in
 
-    let mems = subset_only_mem inst_vars in
-
-    (*
-      inst_vars  (string->term map) -> all registers & referenced memory-locations
-      mems       (string list)      -> all referenced memory-location names
-      spec_globs (string->term map) -> all x,y program variables
-    *)
-    let inst_vars_p =
-      Cvc_util.promote_variables ~ext:"'" tm var_sort inst_vars
-    in
-    let inst_vars_pp =
-      Cvc_util.promote_variables ~ext:"\"" tm var_sort inst_vars
+    (* inst_terms_primes (int * string->term map) ->
+         all registers & memory-locations in the instructions with 0-7 prime
+       spec_terms_primes (int * string->term map) ->
+         all variables in the spec with 0-7 prime *)
+    let terms = (inst_terms_primes, spec_terms_primes) in
+    let all_possible_solver_combinations =
+      generate_combinations (ignore spec_names)
+        (ignore @@ subset_only_mem inst_terms)
     in
 
-    let state_terms =
-      List.map second (Cvc_util.Variables.bindings inst_vars)
-      @ List.map second (Cvc_util.Variables.bindings inst_vars_p)
-      @ List.map second (Cvc_util.Variables.bindings inst_vars_pp)
+    (* *)
+    let valid_in_order =
+      List.filter
+        (check_in_order sp code spec terms)
+        all_possible_solver_combinations
     in
-    let state_funcs =
-      Cvc_util.middlestate_functions solver tm var_sort inst_vars state_terms
+
+    let valid_out_order =
+      List.filter (check_out_order sp code spec terms) valid_in_order
+    in
+
+    (* If these are different then at least one valid in-order combination couldn't prove validity out-of-order *)
+    List.length valid_out_order == List.length valid_in_order
+
+  (*
+    if List.length valid_out_order < List.length valid_in_order then false else true
+
+    let solver = new_solver tm verb () in
+    let exi_quant_funcs =
+      Cvc_util.middlestate_functions solver tm var_sort inst_vars uni_quant_vars
     in
 
     let sygus_inst_vars =
@@ -381,4 +451,5 @@ module Solver = struct
          (SynthResult.to_string result));
 
     SynthResult.has_solution result
+    *)
 end
