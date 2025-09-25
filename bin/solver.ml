@@ -50,6 +50,7 @@ module Solver = struct
     let find_reg map i = Variables.find ("R" ^ i) map
     let find_mem_reg map i = Variables.find ("MR" ^ i) map
     let find_glob map n = Globals.find n map
+    let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
 
     let new_solver (tm, verb) =
       let solver = Solver.mk_solver ~logic:"ALL" tm in
@@ -61,6 +62,15 @@ module Solver = struct
 
       if verb then Solver.set_option solver "output" "sygus";
       solver
+
+    (* Adds a dummy sygus problem: create a function with no args, returning 0. *)
+    let add_dummy_sygus tm solver =
+      let s =
+        Solver.synth_fun solver tm "dummy" (Array.of_list [])
+          (Sort.mk_int_sort tm) None
+      in
+      let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s ]) in
+      Solver.add_sygus_constraint solver (term_eq tm uf (Term.mk_int tm 0))
   end
 
   module Asl_util = struct
@@ -299,24 +309,113 @@ module Solver = struct
        (i.e. forall a,b s.t. a = b, finding f(a) is the same as finding f(b) ) *)
     List.flatten
     @@ List.map
-         (fun m -> List.map second (Cvc_util.Variables.bindings m))
-         (List.map second l)
+         (fun m -> List.map snd (Cvc_util.Variables.bindings m))
+         (List.map snd l)
 
-  let generate_combinations snames inames =
-    ignore snames;
-    ignore inames;
-    []
+  let generate_combinations (snames : string list) (inames : string list) =
+    (* cross is a list of all possible individual mappings, e.g. [mr1 x; mr2 x; mr1 y; mr2 y; mr1 ""; mr2 ""] *)
+    let cross =
+      List.flatten
+      @@ List.map (fun n1 -> List.map (fun n2 -> (n1, n2)) inames) ("" :: snames)
+    in
 
-  let check_in_order sp (i1, i2) (r, g) (iterms, sterms) combination =
-    ignore @@ Cvc_util.new_solver sp;
-    ignore i1;
-    ignore i2;
-    ignore r;
-    ignore g;
-    ignore @@ get_uni_quant_vars iterms;
-    ignore sterms;
-    ignore combination;
-    true
+    (* is "x" a global variable that is already mapasdaped by this proto-mapping *)
+    let already_mapped x s =
+      if String.equal x "" then false
+      else Option.is_some @@ List.find_opt (fun (_, b) -> String.equal x b) s
+    in
+
+    (* powerset but excluding duplicate-second-elements *)
+    let rec pset ls =
+      match ls with
+      | [] -> [ [] ]
+      | x :: xs ->
+          let ps = pset xs in
+          ps
+          @ List.map
+              (fun s -> if already_mapped (snd x) s then s else x :: s)
+              ps
+    in
+
+    (* All combinations of mappings except those where aliasing occurs i.e. the mapping [mr1 x; mr2 x] does not occur
+       Also filter to ones where the mapping is complete. TODO: optimise this. *)
+    List.filter (fun m -> List.length m == List.length inames) (pset cross)
+
+  let check_in_order sp (i1, i2) (r, g) (iterms, sterms) sort combination =
+    let tm = fst sp in
+    let solver = Cvc_util.new_solver sp in
+
+    let decl_as_sygus tms =
+      List.map
+        (fun (i, m) ->
+          ( i,
+            Cvc_util.Variables.map
+              (fun t -> Solver.declare_sygus_var solver (Term.to_string t) sort)
+              m ))
+        tms
+    in
+    let s_sterms = decl_as_sygus sterms in
+    let s_iterms = decl_as_sygus iterms in
+
+    let assume_transitions =
+      (* S0 to S1 over R *)
+      [
+        Spec.cvc_of_spec tm (access_primes 0 s_sterms)
+          (access_primes 1 s_sterms) r;
+      ]
+      (* S1 to S2 over i1 *)
+      @ Asl_util.cvc_of_stmtlist tm (access_primes 1 s_iterms)
+          (access_primes 2 s_iterms) i1
+      (* S2 to S3 over R *)
+      @ [
+          Spec.cvc_of_spec tm (access_primes 2 s_sterms)
+            (access_primes 3 s_sterms) r;
+        ]
+      (* S3 to S4 over i2 *)
+      @ Asl_util.cvc_of_stmtlist tm (access_primes 3 s_iterms)
+          (access_primes 4 s_iterms) i2
+      (* S4 to S5 over R *)
+      @ [
+          Spec.cvc_of_spec tm (access_primes 4 s_sterms)
+            (access_primes 5 s_sterms) r;
+        ]
+    in
+    List.iter (Solver.add_sygus_assume solver) assume_transitions;
+
+    let assume_combination =
+      List.flatten
+      @@ List.map
+           (fun (i, s) ->
+             if String.equal s "" then []
+             else
+               List.map
+                 (fun lv ->
+                   (* for all prime-states, get the global and memory we're mapping (i,s) and '=' them *)
+                   let glob =
+                     Cvc_util.Globals.find s (access_primes lv s_sterms)
+                   in
+                   let mem =
+                     Cvc_util.Variables.find i (access_primes lv s_iterms)
+                   in
+                   Cvc_util.term_eq tm glob mem)
+                 [ 0; 1; 2; 3; 4; 5; 6; 7 ])
+           combination
+    in
+    List.iter (Solver.add_sygus_assume solver) assume_combination;
+
+    let constrain_guarantees =
+      [
+        Spec.cvc_of_spec tm (access_primes 2 s_sterms)
+          (access_primes 2 s_sterms) g;
+        Spec.cvc_of_spec tm (access_primes 4 s_sterms)
+          (access_primes 4 s_sterms) g;
+      ]
+    in
+    List.iter (Solver.add_sygus_constraint solver) constrain_guarantees;
+
+    Cvc_util.add_dummy_sygus tm solver;
+    let result = Solver.check_synth solver in
+    SynthResult.has_solution result
 
   let check_out_order sp (i1, i2) (r, g) (iterms, sterms) combination =
     ignore @@ Cvc_util.new_solver sp;
@@ -376,16 +475,18 @@ module Solver = struct
          all variables in the spec with 0-7 prime *)
     let terms = (inst_terms_primes, spec_terms_primes) in
     let all_possible_solver_combinations =
-      generate_combinations (ignore spec_names)
-        (ignore @@ subset_only_mem inst_terms)
+      generate_combinations spec_names (subset_only_mem inst_terms)
     in
 
-    (* *)
     let valid_in_order =
       List.filter
-        (check_in_order sp code spec terms)
+        (check_in_order sp code spec terms var_sort)
         all_possible_solver_combinations
     in
+    if verb then
+      print_endline
+        (Printf.sprintf "  [!] %i mappings were valid"
+           (List.length valid_in_order));
 
     let valid_out_order =
       List.filter (check_out_order sp code spec terms) valid_in_order
