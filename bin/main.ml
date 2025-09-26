@@ -85,7 +85,7 @@ let () =
   in
   print_endline
     (Printf.sprintf
-       "[!] Extracted %i basic block%s (%i instructions) from %s..." bcount
+       "[!] Extracted %i basic block%s (%i instructions) from '%s()'..." bcount
        (if bcount == 1 then "" else "s")
        icount !component);
 
@@ -115,11 +115,11 @@ let () =
     List.iter
       (fun ((b1, i1), (b2, i2)) ->
         print_endline
-          (Printf.sprintf "    Could reorder %s.%i <-> %s.%i" (b64_bytes b1) i1
-             (b64_bytes b2) i2))
+          (Printf.sprintf "    [!] Could reorder %s.%i <-> %s.%i" (b64_bytes b1)
+             i1 (b64_bytes b2) i2))
       identifiable;
 
   ignore
-    (List.map
+    (List.mapi
        (Solver.solve ~verb:!verb all_block_semantics cvcstyle specification)
        identifiable)

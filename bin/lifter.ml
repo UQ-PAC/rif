@@ -452,6 +452,7 @@ end = struct
   Main Lifter interface
   *)
   let parse (ir : p_ir) (component : string) (verb : bool) =
+    print_endline "[!] Parsing GTIRB IR...";
     let modules = ir.modules in
     let symbols = List.concat_map (fun (m : p_module) -> m.symbols) modules in
     let cfg =
@@ -461,20 +462,19 @@ end = struct
     let component_block_uuid = Lookup.symbol_to_uuid symbols component in
     if verb then
       print_endline
-        (Printf.sprintf "[!] Found entrypoint block %s"
+        (Printf.sprintf "    [!] Found entrypoint block %s"
            (b64_bytes component_block_uuid));
 
     let do_interval (mod_endian : p_bo) (i : p_interval) :
         (bytes * blockdata) list option =
       if Option.is_some (Lookup.codeblock_by_uuid component_block_uuid i.blocks)
-      then (
+      then
         (* This interval has the entrypoint block. Start extracting! *)
         let component_cfg =
           CFG.construct_function_cfg cfg component_block_uuid i
         in
-        if verb then print_endline "[!] Constructed component CFG...";
 
-        let needs_flipping = mod_endian = LittleEndian in
+        let needs_flipping = mod_endian == LittleEndian in
 
         let do_uuid (uuid : bytes) : blockdata =
           let offset, cblock = Lookup.expect_codeblock_by_uuid uuid i.blocks in
@@ -494,7 +494,7 @@ end = struct
           List.map (fun u -> (u, do_uuid u)) (CFG.unpack_uuids component_cfg)
         in
 
-        Some result)
+        Some result
       else None
     in
     let do_section (mod_endian : p_bo) (s : p_section) =

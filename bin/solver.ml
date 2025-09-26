@@ -63,14 +63,19 @@ module Solver = struct
       if verb then Solver.set_option solver "output" "sygus";
       solver
 
-    (* Adds a dummy sygus problem: create a function with no args, returning 0. *)
+    (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0 *)
     let add_dummy_sygus tm solver =
+      let intsort = Sort.mk_int_sort tm in
+      let zero = Term.mk_int tm 0 in
+
+      let dummy_in = Term.mk_var_s tm intsort "dummy_in" in
       let s =
-        Solver.synth_fun solver tm "dummy" (Array.of_list [])
-          (Sort.mk_int_sort tm) None
+        Solver.synth_fun solver tm "dummy"
+          (Array.of_list [ dummy_in ])
+          intsort None
       in
-      let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s ]) in
-      Solver.add_sygus_constraint solver (term_eq tm uf (Term.mk_int tm 0))
+      let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
+      Solver.add_sygus_constraint solver (term_eq tm uf zero)
   end
 
   module Asl_util = struct
@@ -187,42 +192,38 @@ module Solver = struct
                         (Array.of_list [ acc ]))
                     (cvc_of_expr e) slices *)
             | Expr_Field _ -> Term.mk_true tm
-            | Expr_LitInt _ -> Term.mk_true tm
-            | Expr_LitBits _ -> Term.mk_true tm
+            | Expr_LitInt s -> Term.mk_int tm @@ int_of_string s
+            | Expr_LitBits s ->
+                Term.mk_int tm @@ Int64.to_int @@ Int64.of_string @@ "0b" ^ s
             | _ -> unexpected @@ Expr e
           in
 
           let cvc_of_stmt (s : Asl_ast.stmt) =
             match s with
             | Stmt_Assign (l, r, _) ->
-                Term.mk_term tm Kind.Equal
-                  (Array.of_list [ cvc_of_lexpr l; cvc_of_expr r ])
+                Some
+                  (Term.mk_term tm Kind.Equal
+                     (Array.of_list [ cvc_of_lexpr l; cvc_of_expr r ]))
             | Stmt_ConstDecl (_, Ident n, exp, _) ->
                 ivars <- Cvc_util.Variables.add n (cvc_of_expr exp) ivars;
-                Term.mk_true tm
-            | Stmt_VarDecl _ -> Term.mk_true tm
-            | Stmt_VarDeclsNoInit _ -> Term.mk_true tm
-            | Stmt_Assert _ -> Term.mk_true tm
+                None
+            | Stmt_VarDecl _ -> None
+            | Stmt_VarDeclsNoInit _ -> None
+            | Stmt_Assert _ -> None
             | Stmt_TCall (FIdent ("Mem.set", _), _, es, _) ->
                 let addr = List.hd es in
                 let value = List.hd (List.rev es) in
-                Term.mk_term tm Kind.Equal
-                  (Array.of_list [ cvc_of_addr true addr; cvc_of_expr value ])
-            | Stmt_TCall (FIdent (_f, _), _, es, _) ->
-                ignore es;
-                Term.mk_true tm
-            | Stmt_If _ -> Term.mk_true tm
-            | Stmt_Throw _ -> Term.mk_true tm
+                Some
+                  (Term.mk_term tm Kind.Equal
+                     (Array.of_list
+                        [ cvc_of_addr true addr; cvc_of_expr value ]))
+            | Stmt_TCall (FIdent (_f, _), _, _es, _) -> None
+            | Stmt_If _ -> None
+            | Stmt_Throw _ -> None
             | _ -> unexpected @@ Stmt s
           in
 
-          let updates =
-            List.filter_map
-              (fun s ->
-                let x = cvc_of_stmt s in
-                if Term.equal x (Term.mk_true tm) then None else Some x)
-              stmts
-          in
+          let updates = List.filter_map cvc_of_stmt stmts in
           let no_updates =
             Cvc_util.Variables.fold
               (fun key term acc ->
@@ -319,7 +320,7 @@ module Solver = struct
       @@ List.map (fun n1 -> List.map (fun n2 -> (n1, n2)) inames) ("" :: snames)
     in
 
-    (* is "x" a global variable that is already mapasdaped by this proto-mapping *)
+    (* is "x" a global variable that is already mapped by this proto-mapping *)
     let already_mapped x s =
       if String.equal x "" then false
       else Option.is_some @@ List.find_opt (fun (_, b) -> String.equal x b) s
@@ -386,16 +387,16 @@ module Solver = struct
       List.flatten
       @@ List.map
            (fun (i, s) ->
-             if String.equal s "" then []
+             if String.equal i "" then []
              else
                List.map
                  (fun lv ->
                    (* for all prime-states, get the global and memory we're mapping (i,s) and '=' them *)
                    let glob =
-                     Cvc_util.Globals.find s (access_primes lv s_sterms)
+                     Cvc_util.Globals.find i (access_primes lv s_sterms)
                    in
                    let mem =
-                     Cvc_util.Variables.find i (access_primes lv s_iterms)
+                     Cvc_util.Variables.find s (access_primes lv s_iterms)
                    in
                    Cvc_util.term_eq tm glob mem)
                  [ 0; 1; 2; 3; 4; 5; 6; 7 ])
@@ -428,7 +429,8 @@ module Solver = struct
     ignore combination;
     true
 
-  let solve ~verb block_semantics (style : style) spec pair : bool =
+  let solve ~verb block_semantics (style : style) spec idx pair : bool =
+    print_endline (Printf.sprintf "[!] Solving pair %i..." idx);
     let tm = TermManager.mk_tm () in
     let sp = (tm, verb) in
 
@@ -485,8 +487,9 @@ module Solver = struct
     in
     if verb then
       print_endline
-        (Printf.sprintf "  [!] %i mappings were valid"
-           (List.length valid_in_order));
+        (Printf.sprintf "    [!] %i/%i address mappings are valid in-order"
+           (List.length valid_in_order)
+           (List.length all_possible_solver_combinations));
 
     let valid_out_order =
       List.filter (check_out_order sp code spec terms) valid_in_order

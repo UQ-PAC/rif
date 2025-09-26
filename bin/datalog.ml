@@ -182,7 +182,8 @@ end = struct
 
     if verb then
       print_endline
-        (Printf.sprintf "[!] Generated execution order infers %i total pairs..."
+        (Printf.sprintf
+           "    [!] Generated execution order infers %i total pairs"
            (List.length (Helpers.query_execution_order db)));
 
     let reord = Helpers.query_reorderable db in
