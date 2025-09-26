@@ -63,7 +63,8 @@ module Solver = struct
       if verb then Solver.set_option solver "output" "sygus";
       solver
 
-    (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0 *)
+    (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0
+       Functionally this turns a sygus problem into a regular sat problem over the constraints. *)
     let add_dummy_sygus tm solver =
       let intsort = Sort.mk_int_sort tm in
       let zero = Term.mk_int tm 0 in
@@ -183,6 +184,7 @@ module Solver = struct
                 | k ->
                     Term.mk_term tm k (Array.of_list (List.map cvc_of_expr es)))
             | Expr_Slices (e, slices) ->
+                (* Pretend slices aren't real *)
                 ignore (List.map cvc_of_slice slices);
                 cvc_of_expr e
                 (* let sliced =
@@ -342,7 +344,7 @@ module Solver = struct
        Also filter to ones where the mapping is complete. TODO: optimise this. *)
     List.filter (fun m -> List.length m == List.length inames) (pset cross)
 
-  let create_combination c sm im =
+  let create_combination tm c sm im =
     List.flatten
     @@ List.map
          (fun (i, s) ->
@@ -409,7 +411,7 @@ module Solver = struct
     List.iter (Solver.add_sygus_assume solver) assume_transitions;
 
     let assume_combination =
-      create_combination combination sy_sterms sy_iterms
+      create_combination tm combination sy_sterms sy_iterms
     in
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
@@ -447,8 +449,29 @@ module Solver = struct
     let sy_sterms = decl_as_sygus sterms in
     let sy_iterms = decl_as_sygus iterms in
 
-    let sygus_funcs_one = Cvc_util.Variables.empty in
-    let sygus_funcs_two = Cvc_util.Variables.empty in
+    let first_state_map = access_primes 0 sy_iterms in
+    let first_state_vars =
+      List.map snd @@ Cvc_util.Variables.bindings first_state_map
+    in
+    let state_funcs =
+      Cvc_util.middlestate_functions solver tm sort first_state_map
+        first_state_vars
+    in
+
+    let all_state_vars =
+      List.flatten
+      @@ List.map
+           (fun i -> (List.map snd) (Cvc_util.Variables.bindings @@ snd i))
+           sy_iterms
+    in
+
+    let sygus_funcs_one =
+      Cvc_util.Variables.map
+        (fun t ->
+          Term.mk_term tm Kind.Apply_uf (Array.of_list (t :: all_state_vars)))
+        state_funcs
+    in
+    let sygus_funcs_two = Cvc_util.promote_variables tm sort sygus_funcs_one in
 
     let assume_transitions =
       (* S0 to S1 over R *)
@@ -485,7 +508,7 @@ module Solver = struct
     in
     List.iter (Solver.add_sygus_assume solver) assume_transitions;
     let assume_combination =
-      create_combination combination sy_sterms sy_iterms
+      create_combination tm combination sy_sterms sy_iterms
     in
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
@@ -578,68 +601,9 @@ module Solver = struct
            (List.length all_possible_solver_combinations));
 
     let valid_out_order =
-      List.filter (check_out_order sp code spec terms) valid_in_order
+      List.filter (check_out_order sp code spec terms var_sort) valid_in_order
     in
 
     (* If these are different then at least one valid in-order combination couldn't prove validity out-of-order *)
     List.length valid_out_order == List.length valid_in_order
-
-  (*
-    if List.length valid_out_order < List.length valid_in_order then false else true
-
-    let solver = new_solver tm verb () in
-    let exi_quant_funcs =
-      Cvc_util.middlestate_functions solver tm var_sort inst_vars uni_quant_vars
-    in
-
-    let sygus_inst_vars =
-      Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
-        inst_vars
-    in
-    let sygus_inst_vars_p =
-      Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
-        inst_vars_p
-    in
-    let sygus_inst_vars_pp =
-      Cvc_util.Variables.map
-        (fun t -> Solver.declare_sygus_var solver (Term.to_string t) var_sort)
-        inst_vars_pp
-    in
-
-    let sygus_terms =
-      List.map second (Cvc_util.Variables.bindings sygus_inst_vars)
-      @ List.map second (Cvc_util.Variables.bindings sygus_inst_vars_p)
-      @ List.map second (Cvc_util.Variables.bindings sygus_inst_vars_pp)
-    in
-    let sygus_funcs =
-      Cvc_util.Variables.map
-        (fun t ->
-          Term.mk_term tm Kind.Apply_uf (Array.of_list (t :: sygus_terms)))
-        state_funcs
-    in
-
-    let assume_terms =
-      Asl_util.cvc_of_stmtlist tm sygus_inst_vars sygus_inst_vars_p
-        instruction_one
-      @ Asl_util.cvc_of_stmtlist tm sygus_inst_vars_p sygus_inst_vars_pp
-          instruction_two
-    in
-    List.iter (Solver.add_sygus_assume solver) assume_terms;
-
-    let constraint_terms =
-      Asl_util.cvc_of_stmtlist tm sygus_inst_vars sygus_funcs instruction_two
-      @ Asl_util.cvc_of_stmtlist tm sygus_funcs sygus_inst_vars_pp
-          instruction_one
-    in
-    List.iter (Solver.add_sygus_constraint solver) constraint_terms;
-
-    let result = Solver.check_synth solver in
-    print_endline
-      (Printf.sprintf "[!] Solver found middlestate... %s"
-         (SynthResult.to_string result));
-
-    SynthResult.has_solution result
-    *)
 end

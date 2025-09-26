@@ -9,7 +9,7 @@ open Solver
 let component = ref "main"
 let style = ref "integers"
 let verb = ref false
-let input_gts = ref ""
+let input_gtirb = ref ""
 let rely = ref "true"
 let guar = ref "true"
 
@@ -28,12 +28,12 @@ let speclist =
     ("--verbose", Arg.Set verb, "verbose-mode output");
   ]
 
-let usage = Printf.sprintf "Usage: %s [options] input.gts\n" Sys.argv.(0)
+let usage = Printf.sprintf "Usage: %s [options] input.gtirb\n" Sys.argv.(0)
 let argc = ref 0
 
 let args arg =
   argc := 1 + !argc;
-  match !argc with 1 -> input_gts := arg | _ -> ()
+  match !argc with 1 -> input_gtirb := arg | _ -> ()
 
 let cvcstyle : Solver.style =
   match !style with
@@ -42,16 +42,16 @@ let cvcstyle : Solver.style =
   | _ -> failwith "Bad solver type :("
 
 (* From UQ-PAC/gtirb_semantics *)
-let read_gts filename =
+let read_gtirb filename =
   let bytes_in =
-    let gts = open_in_bin filename in
-    let len = in_channel_length gts in
-    let magic = really_input_string gts 8 in
-    let rest = really_input_string gts (len - 8) in
+    let gtirb = open_in_bin filename in
+    let len = in_channel_length gtirb in
+    let magic = really_input_string gtirb 8 in
+    let rest = really_input_string gtirb (len - 8) in
     let res =
       if String.starts_with ~prefix:"GTIRB" magic then rest else magic ^ rest
     in
-    close_in gts;
+    close_in gtirb;
     res
   in
   let gtirb = IR.from_proto (Reader.create bytes_in) in
@@ -70,7 +70,7 @@ let () =
     output_string stderr usage;
     exit 1);
 
-  let ir = read_gts !input_gts in
+  let ir = read_gtirb !input_gtirb in
   let (all_block_semantics : Lifter.blockdata Lifter.Blocks.t) =
     Lifter.parse ir !component !verb
   in
