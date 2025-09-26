@@ -265,6 +265,7 @@ module Solver = struct
       | _ -> ()
 
     let input (r : string) (g : string) : speclang * speclang =
+      (* TODO: this is a dummy impl *)
       let parse s =
         ignore s;
         Bool true
@@ -457,7 +458,9 @@ module Solver = struct
       Cvc_util.middlestate_functions solver tm sort first_state_map
         first_state_vars
     in
+    ignore state_funcs;
 
+    (* TODO: segfaulting
     let all_state_vars =
       List.flatten
       @@ List.map
@@ -472,7 +475,7 @@ module Solver = struct
         state_funcs
     in
     let sygus_funcs_two = Cvc_util.promote_variables tm sort sygus_funcs_one in
-
+    *)
     let assume_transitions =
       (* S0 to S1 over R *)
       [
@@ -512,6 +515,7 @@ module Solver = struct
     in
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
+    (* TODO: depends on segfaulting
     let constrain_transitions =
       (* S0 to f0 over R *)
       [ Spec.cvc_of_spec tm (access_primes 0 sy_sterms) sygus_funcs_one r ]
@@ -534,12 +538,12 @@ module Solver = struct
         ]
     in
     List.iter (Solver.add_sygus_constraint solver) constrain_transitions;
-
+    *)
     let result = Solver.check_synth solver in
     SynthResult.has_solution result
 
   let solve ~verb block_semantics (style : style) spec idx pair : bool =
-    print_endline (Printf.sprintf "[!] Solving pair %i..." idx);
+    print_endline (Printf.sprintf "[!] Solving pair %i..." (idx + 1));
     let tm = TermManager.mk_tm () in
     let sp = (tm, verb) in
 
