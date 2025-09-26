@@ -342,6 +342,21 @@ module Solver = struct
        Also filter to ones where the mapping is complete. TODO: optimise this. *)
     List.filter (fun m -> List.length m == List.length inames) (pset cross)
 
+  let create_combination c sm im =
+    List.flatten
+    @@ List.map
+         (fun (i, s) ->
+           if String.equal i "" then []
+           else
+             List.map
+               (fun lv ->
+                 (* for all prime-states, get the global and memory we're mapping (i,s) and '=' them *)
+                 let glob = Cvc_util.Globals.find i (access_primes lv sm) in
+                 let mem = Cvc_util.Variables.find s (access_primes lv im) in
+                 Cvc_util.term_eq tm glob mem)
+               [ 0; 1; 2; 3; 4; 5; 6; 7 ])
+         c
+
   let check_in_order sp (i1, i2) (r, g) (iterms, sterms) sort combination =
     let tm = fst sp in
     let solver = Cvc_util.new_solver sp in
@@ -355,61 +370,59 @@ module Solver = struct
               m ))
         tms
     in
-    let s_sterms = decl_as_sygus sterms in
-    let s_iterms = decl_as_sygus iterms in
+    let sy_sterms = decl_as_sygus sterms in
+    let sy_iterms = decl_as_sygus iterms in
 
     let assume_transitions =
       (* S0 to S1 over R *)
       [
-        Spec.cvc_of_spec tm (access_primes 0 s_sterms)
-          (access_primes 1 s_sterms) r;
+        Spec.cvc_of_spec tm
+          (access_primes 0 sy_sterms)
+          (access_primes 1 sy_sterms)
+          r;
       ]
       (* S1 to S2 over i1 *)
-      @ Asl_util.cvc_of_stmtlist tm (access_primes 1 s_iterms)
-          (access_primes 2 s_iterms) i1
+      @ Asl_util.cvc_of_stmtlist tm
+          (access_primes 1 sy_iterms)
+          (access_primes 2 sy_iterms)
+          i1
       (* S2 to S3 over R *)
       @ [
-          Spec.cvc_of_spec tm (access_primes 2 s_sterms)
-            (access_primes 3 s_sterms) r;
+          Spec.cvc_of_spec tm
+            (access_primes 2 sy_sterms)
+            (access_primes 3 sy_sterms)
+            r;
         ]
       (* S3 to S4 over i2 *)
-      @ Asl_util.cvc_of_stmtlist tm (access_primes 3 s_iterms)
-          (access_primes 4 s_iterms) i2
+      @ Asl_util.cvc_of_stmtlist tm
+          (access_primes 3 sy_iterms)
+          (access_primes 4 sy_iterms)
+          i2
       (* S4 to S5 over R *)
       @ [
-          Spec.cvc_of_spec tm (access_primes 4 s_sterms)
-            (access_primes 5 s_sterms) r;
+          Spec.cvc_of_spec tm
+            (access_primes 4 sy_sterms)
+            (access_primes 5 sy_sterms)
+            r;
         ]
     in
     List.iter (Solver.add_sygus_assume solver) assume_transitions;
 
     let assume_combination =
-      List.flatten
-      @@ List.map
-           (fun (i, s) ->
-             if String.equal i "" then []
-             else
-               List.map
-                 (fun lv ->
-                   (* for all prime-states, get the global and memory we're mapping (i,s) and '=' them *)
-                   let glob =
-                     Cvc_util.Globals.find i (access_primes lv s_sterms)
-                   in
-                   let mem =
-                     Cvc_util.Variables.find s (access_primes lv s_iterms)
-                   in
-                   Cvc_util.term_eq tm glob mem)
-                 [ 0; 1; 2; 3; 4; 5; 6; 7 ])
-           combination
+      create_combination combination sy_sterms sy_iterms
     in
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
     let constrain_guarantees =
       [
-        Spec.cvc_of_spec tm (access_primes 2 s_sterms)
-          (access_primes 2 s_sterms) g;
-        Spec.cvc_of_spec tm (access_primes 4 s_sterms)
-          (access_primes 4 s_sterms) g;
+        Spec.cvc_of_spec tm
+          (access_primes 2 sy_sterms)
+          (access_primes 2 sy_sterms)
+          g;
+        Spec.cvc_of_spec tm
+          (access_primes 4 sy_sterms)
+          (access_primes 4 sy_sterms)
+          g;
       ]
     in
     List.iter (Solver.add_sygus_constraint solver) constrain_guarantees;
@@ -418,16 +431,89 @@ module Solver = struct
     let result = Solver.check_synth solver in
     SynthResult.has_solution result
 
-  let check_out_order sp (i1, i2) (r, g) (iterms, sterms) combination =
-    ignore @@ Cvc_util.new_solver sp;
-    ignore i1;
-    ignore i2;
-    ignore r;
-    ignore g;
-    ignore @@ get_uni_quant_vars iterms;
-    ignore sterms;
-    ignore combination;
-    true
+  let check_out_order sp (i1, i2) (r, _g) (iterms, sterms) sort combination =
+    let tm = fst sp in
+    let solver = Cvc_util.new_solver sp in
+
+    let decl_as_sygus tms =
+      List.map
+        (fun (i, m) ->
+          ( i,
+            Cvc_util.Variables.map
+              (fun t -> Solver.declare_sygus_var solver (Term.to_string t) sort)
+              m ))
+        tms
+    in
+    let sy_sterms = decl_as_sygus sterms in
+    let sy_iterms = decl_as_sygus iterms in
+
+    let sygus_funcs_one = Cvc_util.Variables.empty in
+    let sygus_funcs_two = Cvc_util.Variables.empty in
+
+    let assume_transitions =
+      (* S0 to S1 over R *)
+      [
+        Spec.cvc_of_spec tm
+          (access_primes 0 sy_sterms)
+          (access_primes 1 sy_sterms)
+          r;
+      ]
+      (* S1 to S2 over i2 *)
+      @ Asl_util.cvc_of_stmtlist tm
+          (access_primes 1 sy_iterms)
+          (access_primes 2 sy_iterms)
+          i2
+      (* S2 to S3 over R *)
+      @ [
+          Spec.cvc_of_spec tm
+            (access_primes 2 sy_sterms)
+            (access_primes 3 sy_sterms)
+            r;
+        ]
+      (* S3 to S4 over i1 *)
+      @ Asl_util.cvc_of_stmtlist tm
+          (access_primes 3 sy_iterms)
+          (access_primes 4 sy_iterms)
+          i1
+      (* S4 to S5 over R *)
+      @ [
+          Spec.cvc_of_spec tm
+            (access_primes 4 sy_sterms)
+            (access_primes 5 sy_sterms)
+            r;
+        ]
+    in
+    List.iter (Solver.add_sygus_assume solver) assume_transitions;
+    let assume_combination =
+      create_combination combination sy_sterms sy_iterms
+    in
+    List.iter (Solver.add_sygus_assume solver) assume_combination;
+
+    let constrain_transitions =
+      (* S0 to f0 over R *)
+      [ Spec.cvc_of_spec tm (access_primes 0 sy_sterms) sygus_funcs_one r ]
+      (* f0 to S6 over i1 *)
+      @ Asl_util.cvc_of_stmtlist tm sygus_funcs_one
+          (access_primes 6 sy_iterms)
+          i1
+      (* S6 to f1 over R *)
+      @ [ Spec.cvc_of_spec tm (access_primes 6 sy_iterms) sygus_funcs_two r ]
+      (* f6 to S7 over i2 *)
+      @ Asl_util.cvc_of_stmtlist tm sygus_funcs_two
+          (access_primes 7 sy_iterms)
+          i2
+      (* S7 back to S5 over R *)
+      @ [
+          Spec.cvc_of_spec tm
+            (access_primes 7 sy_iterms)
+            (access_primes 5 sy_iterms)
+            r;
+        ]
+    in
+    List.iter (Solver.add_sygus_constraint solver) constrain_transitions;
+
+    let result = Solver.check_synth solver in
+    SynthResult.has_solution result
 
   let solve ~verb block_semantics (style : style) spec idx pair : bool =
     print_endline (Printf.sprintf "[!] Solving pair %i..." idx);
