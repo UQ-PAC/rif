@@ -119,7 +119,15 @@ let () =
              i1 (b64_bytes b2) i2))
       identifiable;
 
-  ignore
-    (List.mapi
-       (Solver.solve ~verb:!verb all_block_semantics cvcstyle specification)
-       identifiable)
+  let failed =
+    List.filteri
+      (Solver.solve ~verb:!verb all_block_semantics cvcstyle specification)
+      identifiable
+  in
+
+  if List.length failed == 0 then
+    print_endline
+      "[!] SUCCESS: All reorderable instructions will uphold the R/G spec."
+  else
+    print_endline
+      "[!] FAILED: At least one reorderable pair did not uphold the R/G spec."

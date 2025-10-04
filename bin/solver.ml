@@ -36,10 +36,11 @@ module Solver = struct
           Variables.add name (make_term tm srt prime) acc)
         map Variables.empty
 
-    let middlestate_functions solver tm srt map inputs : Term.term Variables.t =
+    let middlestate_functions ?(ext = "") solver tm srt map inputs :
+        Term.term Variables.t =
       Variables.fold
         (fun name _ acc ->
-          let f = "f" ^ name in
+          let f = "f" ^ name ^ ext in
           Variables.add name
             (Solver.synth_fun solver tm f (Array.of_list inputs) srt None)
             acc)
@@ -52,15 +53,17 @@ module Solver = struct
     let find_glob map n = Globals.find n map
     let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
 
-    let new_solver (tm, verb) =
+    let new_solver (tm, _verb) =
       let solver = Solver.mk_solver ~logic:"ALL" tm in
       Solver.set_option solver "sygus" "true";
       Solver.set_option solver "full-sygus-verify" "true";
-      Solver.set_option solver "sygus-enum" "fast";
+      Solver.set_option solver "sygus-enum" "smart";
       Solver.set_option solver "sygus-si" "all";
       Solver.set_option solver "incremental" "true";
 
-      if verb then Solver.set_option solver "output" "sygus";
+      Solver.set_option solver "output" "sygus";
+      Solver.set_option solver "output" "sygus-grammar";
+      Solver.set_option solver "output" "sygus-enumerator";
       solver
 
     (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0
@@ -275,15 +278,32 @@ module Solver = struct
       sanity_guar_uses_posts guar;
       (parse r, guar)
 
-    let rec cvc_of_spec tm fromv tov spec =
-      let subcall = cvc_of_spec tm fromv tov in
+    type spec_behaviour =
+      | ConstrainFuncsUnchanged
+      | AssumeRegsUnchanged
+      | Nothing
 
-      match spec with
-      | Term (k, ts) -> Term.mk_term tm k (Array.of_list @@ List.map subcall ts)
-      | Const i -> Term.mk_int tm i
-      | Bool b -> Term.mk_bool tm b
-      | Pre s -> Cvc_util.find_glob fromv s
-      | Post s -> Cvc_util.find_glob tov s
+    let cvc_of_spec ?(b = Nothing) tm fromv tov spec =
+      let rec subcall node =
+        match node with
+        | Term (k, ts) ->
+            Term.mk_term tm k (Array.of_list @@ List.map subcall ts)
+        | Const i -> Term.mk_int tm i
+        | Bool b -> Term.mk_bool tm b
+        | Pre s -> Cvc_util.find_glob fromv s
+        | Post s -> Cvc_util.find_glob tov s
+      in
+
+      match b with
+      | Nothing -> [ subcall spec ]
+      | AssumeRegsUnchanged | ConstrainFuncsUnchanged ->
+          subcall spec
+          :: List.filter_map
+               (fun (k, v) ->
+                 if not (String.starts_with ~prefix:"R" k) then None
+                 else
+                   Some (Cvc_util.term_eq tm v (Cvc_util.Variables.find k tov)))
+               (Cvc_util.Variables.bindings fromv)
   end
 
   let subset_only_mem vars : string list =
@@ -378,36 +398,30 @@ module Solver = struct
 
     let assume_transitions =
       (* S0 to S1 over R *)
-      [
-        Spec.cvc_of_spec tm
-          (access_primes 0 sy_sterms)
-          (access_primes 1 sy_sterms)
-          r;
-      ]
+      Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+        (access_primes 0 sy_sterms)
+        (access_primes 1 sy_sterms)
+        r
       (* S1 to S2 over i1 *)
       @ Asl_util.cvc_of_stmtlist tm
           (access_primes 1 sy_iterms)
           (access_primes 2 sy_iterms)
           i1
       (* S2 to S3 over R *)
-      @ [
-          Spec.cvc_of_spec tm
-            (access_primes 2 sy_sterms)
-            (access_primes 3 sy_sterms)
-            r;
-        ]
+      @ Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+          (access_primes 2 sy_sterms)
+          (access_primes 3 sy_sterms)
+          r
       (* S3 to S4 over i2 *)
       @ Asl_util.cvc_of_stmtlist tm
           (access_primes 3 sy_iterms)
           (access_primes 4 sy_iterms)
           i2
       (* S4 to S5 over R *)
-      @ [
-          Spec.cvc_of_spec tm
-            (access_primes 4 sy_sterms)
-            (access_primes 5 sy_sterms)
-            r;
-        ]
+      @ Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+          (access_primes 4 sy_sterms)
+          (access_primes 5 sy_sterms)
+          r
     in
     List.iter (Solver.add_sygus_assume solver) assume_transitions;
 
@@ -417,16 +431,14 @@ module Solver = struct
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
     let constrain_guarantees =
-      [
-        Spec.cvc_of_spec tm
-          (access_primes 2 sy_sterms)
-          (access_primes 2 sy_sterms)
-          g;
-        Spec.cvc_of_spec tm
+      Spec.cvc_of_spec tm
+        (access_primes 2 sy_sterms)
+        (access_primes 2 sy_sterms)
+        g
+      @ Spec.cvc_of_spec tm
           (access_primes 4 sy_sterms)
           (access_primes 4 sy_sterms)
-          g;
-      ]
+          g
     in
     List.iter (Solver.add_sygus_constraint solver) constrain_guarantees;
 
@@ -451,16 +463,7 @@ module Solver = struct
     let sy_iterms = decl_as_sygus iterms in
 
     let first_state_map = access_primes 0 sy_iterms in
-    let first_state_vars =
-      List.map snd @@ Cvc_util.Variables.bindings first_state_map
-    in
-    let state_funcs =
-      Cvc_util.middlestate_functions solver tm sort first_state_map
-        first_state_vars
-    in
-    ignore state_funcs;
 
-    (* TODO: segfaulting
     let all_state_vars =
       List.flatten
       @@ List.map
@@ -468,79 +471,94 @@ module Solver = struct
            sy_iterms
     in
 
-    let sygus_funcs_one =
-      Cvc_util.Variables.map
-        (fun t ->
-          Term.mk_term tm Kind.Apply_uf (Array.of_list (t :: all_state_vars)))
-        state_funcs
+    let state_funcs =
+      Cvc_util.middlestate_functions solver tm sort first_state_map
+        all_state_vars
     in
-    let sygus_funcs_two = Cvc_util.promote_variables tm sort sygus_funcs_one in
-    *)
+    let state_funcs_two =
+      Cvc_util.middlestate_functions ~ext:"'" solver tm sort first_state_map
+        all_state_vars
+    in
+
+    let apply_uf =
+      Cvc_util.Variables.map (fun t ->
+          Term.mk_term tm Kind.Apply_uf (Array.of_list (t :: all_state_vars)))
+    in
+    let sygus_funcs_one = apply_uf state_funcs in
+    let sygus_funcs_two = apply_uf state_funcs_two in
+
     let assume_transitions =
       (* S0 to S1 over R *)
-      [
-        Spec.cvc_of_spec tm
-          (access_primes 0 sy_sterms)
-          (access_primes 1 sy_sterms)
-          r;
-      ]
+      Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+        (access_primes 0 sy_sterms)
+        (access_primes 1 sy_sterms)
+        r
       (* S1 to S2 over i2 *)
       @ Asl_util.cvc_of_stmtlist tm
           (access_primes 1 sy_iterms)
           (access_primes 2 sy_iterms)
           i2
       (* S2 to S3 over R *)
-      @ [
-          Spec.cvc_of_spec tm
-            (access_primes 2 sy_sterms)
-            (access_primes 3 sy_sterms)
-            r;
-        ]
+      @ Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+          (access_primes 2 sy_sterms)
+          (access_primes 3 sy_sterms)
+          r
       (* S3 to S4 over i1 *)
       @ Asl_util.cvc_of_stmtlist tm
           (access_primes 3 sy_iterms)
           (access_primes 4 sy_iterms)
           i1
       (* S4 to S5 over R *)
-      @ [
-          Spec.cvc_of_spec tm
-            (access_primes 4 sy_sterms)
-            (access_primes 5 sy_sterms)
-            r;
-        ]
+      @ Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+          (access_primes 4 sy_sterms)
+          (access_primes 5 sy_sterms)
+          r
     in
     List.iter (Solver.add_sygus_assume solver) assume_transitions;
+    print_endline "assume tran";
+    List.iter (compose print_endline Term.to_string) assume_transitions;
     let assume_combination =
       create_combination tm combination sy_sterms sy_iterms
     in
     List.iter (Solver.add_sygus_assume solver) assume_combination;
 
-    (* TODO: depends on segfaulting
+    print_endline "assume comb";
+    List.iter (compose print_endline Term.to_string) assume_combination;
     let constrain_transitions =
       (* S0 to f0 over R *)
-      [ Spec.cvc_of_spec tm (access_primes 0 sy_sterms) sygus_funcs_one r ]
+      Spec.cvc_of_spec ~b:Spec.ConstrainFuncsUnchanged tm
+        (access_primes 0 sy_sterms)
+        sygus_funcs_one r
       (* f0 to S6 over i1 *)
       @ Asl_util.cvc_of_stmtlist tm sygus_funcs_one
           (access_primes 6 sy_iterms)
           i1
       (* S6 to f1 over R *)
-      @ [ Spec.cvc_of_spec tm (access_primes 6 sy_iterms) sygus_funcs_two r ]
+      @ Spec.cvc_of_spec ~b:Spec.ConstrainFuncsUnchanged tm
+          (access_primes 6 sy_iterms)
+          sygus_funcs_two r
       (* f6 to S7 over i2 *)
       @ Asl_util.cvc_of_stmtlist tm sygus_funcs_two
           (access_primes 7 sy_iterms)
           i2
-      (* S7 back to S5 over R *)
-      @ [
-          Spec.cvc_of_spec tm
-            (access_primes 7 sy_iterms)
-            (access_primes 5 sy_iterms)
-            r;
-        ]
     in
     List.iter (Solver.add_sygus_constraint solver) constrain_transitions;
-    *)
+
+    let assume_final_transition =
+      (* S7 back to S5 over R *)
+      Spec.cvc_of_spec ~b:Spec.AssumeRegsUnchanged tm
+        (access_primes 7 sy_iterms)
+        (access_primes 5 sy_iterms)
+        r
+    in
+    print_endline "assume tran";
+    List.iter (compose print_endline Term.to_string) assume_final_transition;
+    List.iter (Solver.add_sygus_assume solver) assume_final_transition;
+
+    print_endline "constrain tran";
+    List.iter (compose print_endline Term.to_string) constrain_transitions;
     let result = Solver.check_synth solver in
-    SynthResult.has_solution result
+    not (SynthResult.has_solution result)
 
   let solve ~verb block_semantics (style : style) spec idx pair : bool =
     print_endline (Printf.sprintf "[!] Solving pair %i..." (idx + 1));
@@ -592,22 +610,48 @@ module Solver = struct
     let all_possible_solver_combinations =
       generate_combinations spec_names (subset_only_mem inst_terms)
     in
+    let countall = List.length all_possible_solver_combinations in
 
     let valid_in_order =
       List.filter
         (check_in_order sp code spec terms var_sort)
         all_possible_solver_combinations
     in
+
+    if List.length valid_in_order == 0 then (
+      print_endline "!!! No mappings were valid in-order. Check your spec!";
+      ignore (exit 1));
+
     if verb then
       print_endline
         (Printf.sprintf "    [!] %i/%i address mappings are valid in-order"
            (List.length valid_in_order)
-           (List.length all_possible_solver_combinations));
+           countall);
 
-    let valid_out_order =
+    let invalid_out_order =
       List.filter (check_out_order sp code spec terms var_sort) valid_in_order
     in
 
+    if verb then
+      print_endline
+        (Printf.sprintf "    [!] %i/%i address mappings are valid out-of-order"
+           (countall - List.length invalid_out_order)
+           countall);
+
+    if List.length invalid_out_order != 0 then
+      print_endline
+        (Printf.sprintf "[!] Failed for mappings:\n    %s"
+           (String.concat "\n    "
+              (List.map
+                 (fun m ->
+                   String.concat ";"
+                     (List.map
+                        (fun (s1, s2) ->
+                          Printf.sprintf "%s->%s" s2
+                            (if String.equal s1 "" then "{any var}" else s1))
+                        m))
+                 invalid_out_order)));
+
     (* If these are different then at least one valid in-order combination couldn't prove validity out-of-order *)
-    List.length valid_out_order == List.length valid_in_order
+    List.length invalid_out_order != 0
 end
