@@ -1,6 +1,6 @@
 module DL = Datalog_caml_interface
-open Util
 open Lifter
+open Util
 
 (*
   Wrapper around the datalog engine

@@ -1,7 +1,7 @@
 open Cvc5
 open Util
 
-module Spec = struct
+module RGSpec = struct
   type speclang =
     | Term of Kind.t * speclang list
     | Const of int

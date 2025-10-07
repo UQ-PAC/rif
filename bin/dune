@@ -10,4 +10,4 @@
   asli.libASL
   aslp_offline.pc_aarch64
   angstrom)
- (modules main lifter datalog util solver spec))
+ (modules main lifter datalog util solver rgspec))

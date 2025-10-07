@@ -1,7 +1,7 @@
 open Cvc5
 open Lifter
 open Util
-open Spec
+open Rgspec
 
 module Solver = struct
   type style = Integers | BitVectors
@@ -141,9 +141,9 @@ module Solver = struct
     let sy_inst_terms = decl_as_sygus inst_terms in
 
     let spec_from_to p1 p2 spec =
-      Spec.cvc_of_spec
+      RGSpec.cvc_of_spec
         ~b:
-          (Spec.AssumeRegsUnchanged
+          (RGSpec.AssumeRegsUnchanged
              (access_primes p1 sy_inst_terms, access_primes p2 sy_inst_terms))
         tm
         (access_primes p1 sy_spec_terms)
@@ -194,9 +194,9 @@ module Solver = struct
     in
 
     let spec_from_to p1 p2 spec =
-      Spec.cvc_of_spec
+      RGSpec.cvc_of_spec
         ~b:
-          (Spec.AssumeRegsUnchanged
+          (RGSpec.AssumeRegsUnchanged
              (access_primes p1 sy_inst_terms, access_primes p2 sy_inst_terms))
         tm
         (access_primes p1 sy_spec_terms)
@@ -237,7 +237,11 @@ module Solver = struct
     print_endline "ct";
     let constrain_transitions =
       (* S0 to f0 over R *)
-      Spec.cvc_of_spec ~b:Spec.ConstrainFuncsUnchanged tm
+      RGSpec.cvc_of_spec
+        ~b:
+          (RGSpec.ConstrainFuncsUnchanged
+             (access_primes 0 sy_inst_terms, sy_funcs_one))
+        tm
         (access_primes 0 sy_inst_terms)
         sy_funcs_one r
       (* f0 to S6 over i1 *)
@@ -245,7 +249,11 @@ module Solver = struct
           (access_primes 6 sy_inst_terms)
           i1
       (* S6 to f1 over R *)
-      @ Spec.cvc_of_spec ~b:Spec.ConstrainFuncsUnchanged tm
+      @ RGSpec.cvc_of_spec
+          ~b:
+            (RGSpec.ConstrainFuncsUnchanged
+               (access_primes 6 sy_inst_terms, sy_funcs_two))
+          tm
           (access_primes 6 sy_inst_terms)
           sy_funcs_two r
       (* f6 to S7 over i2 *)
@@ -289,7 +297,9 @@ module Solver = struct
            (Lifter.all_variables @@ unpack_sum block_semantics pair))
     in
 
-    let spec_names = Spec.collect_globs rely @ Spec.collect_globs guarantee in
+    let spec_names =
+      RGSpec.collect_globs rely @ RGSpec.collect_globs guarantee
+    in
     let spec_terms = Util.Cvc.make_spec_vars tm var_sort spec_names in
 
     let inst_terms_primes =

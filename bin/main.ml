@@ -2,8 +2,9 @@ open Ocaml_protoc_plugin
 open Rif.IR.Gtirb.Proto
 open Lifter
 open Datalog
-open Util
 open Solver
+open Rgspec
+open Util
 
 (* Argument parsing *)
 let component = ref "main"
@@ -75,7 +76,7 @@ let () =
     Lifter.parse ir !component !verb
   in
 
-  let specification = Solver.Spec.input !rely !guar in
+  let specification = RGSpec.input !rely !guar in
 
   let bcount = Lifter.Blocks.cardinal all_block_semantics in
   let icount =
