@@ -520,20 +520,13 @@ end = struct
     | None -> failwith "Internal error :("
 
   let all_variables (s1, s2) : var list =
-    let acc = s1.read in
-    let unseen_var acc next =
-      match List.find_opt (varEq next) acc with
-      | Some _ -> acc
-      | None -> next :: acc
+    let unseen_var seen next =
+      match List.find_opt (varEq next) seen with
+      | Some _ -> seen
+      | None -> next :: seen
     in
 
-    let acc = List.fold_left unseen_var acc s2.read in
-    let acc = List.fold_left unseen_var acc s1.write in
-    let acc = List.fold_left unseen_var acc s2.write in
-    let acc = List.fold_left unseen_var acc s1.load in
-    let acc = List.fold_left unseen_var acc s2.load in
-    let acc = List.fold_left unseen_var acc s1.store in
-    List.fold_left unseen_var acc s2.store
+    List.fold_left unseen_var s1.read (s2.read @ s1.write @ s2.write @ s1.load @ s2.load @ s1.store @ s2.store)
 
   (****************************************************************************
    * Lifter to Cvc5

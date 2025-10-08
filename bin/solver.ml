@@ -6,12 +6,6 @@ open Rgspec
 module Solver = struct
   type style = Integers | BitVectors
 
-  let subset_only_mem vars : string list =
-    Util.Cvc.TermMap.fold
-      (fun k _ (l : string list) : string list ->
-        if Char.equal k.[0] 'M' then k :: l else l)
-      vars []
-
   let unpack_sem (blocks : Lifter.blockdata Lifter.Blocks.t) ((b1, i1), (b2, i2))
       =
     ( (match access_index i1 (Lifter.Blocks.find b1 blocks).block_semantics with
@@ -36,14 +30,20 @@ module Solver = struct
          (fun m -> List.map snd (Util.Cvc.TermMap.bindings m))
          (List.map snd l)
 
-  let generate_combinations (snames : string list) (inames : string list) =
+  let generate_combinations (snames : string list) (inst_vars : Util.Cvc.terms) =
+    (* Get only the names of memory-variables from the inst_vars *)
+    let subset_only_mem = Util.Cvc.TermMap.fold
+      (fun k _ (l : string list) : string list ->
+        if Char.equal k.[0] 'M' then k :: l else l)
+      inst_vars [] in
+
     (* cross is a list of all possible individual mappings, e.g. [mr1 x; mr2 x; mr1 y; mr2 y; mr1 ""; mr2 ""] *)
     let cross =
       List.flatten
-      @@ List.map (fun n1 -> List.map (fun n2 -> (n1, n2)) inames) ("" :: snames)
+      @@ List.map (fun n1 -> List.map (fun n2 -> (n1, n2)) subset_only_mem) ("" :: snames)
     in
 
-    (* is "x" a global variable that is already mapped by this proto-mapping *)
+    (* is "x" a global variable that is already mapped by this proto-mapping? *)
     let already_mapped x s =
       if String.equal x "" then false
       else Option.is_some @@ List.find_opt (fun (_, b) -> String.equal x b) s
@@ -63,27 +63,27 @@ module Solver = struct
 
     (* All combinations of mappings except those where aliasing occurs i.e. the mapping [mr1 x; mr2 x] does not occur
        Also filter to ones where the mapping is complete. TODO: optimise this. *)
-    List.filter (fun m -> List.length m == List.length inames) (pset cross)
+    List.filter (fun m -> List.length m == List.length subset_only_mem) (pset cross)
 
-  let create_combination tm c sm im =
+  (* Generate the constraints that connect all MR'x with <var>'x for this combination *)
+  let create_combination tm (combination : (string * string) list) (spec_maps : Util.Cvc.terms_primes) (inst_maps : Util.Cvc.terms_primes) =
     List.flatten
     @@ List.map
          (fun (i, s) ->
+           (* If x maps to "" then it's considered "unmapped", i.e. "no memory in this pair aliases x" *)
            if String.equal i "" then []
            else
              List.map
                (fun lv ->
                  (* for all prime-states, get the global and memory we're mapping (i,s) and '=' them *)
-                 let glob = Util.Cvc.TermMap.find i (access_primes lv sm) in
-                 let mem = Util.Cvc.TermMap.find s (access_primes lv im) in
+                 let glob = Util.Cvc.TermMap.find i (access_primes lv spec_maps) in
+                 let mem = Util.Cvc.TermMap.find s (access_primes lv inst_maps) in
                  Util.Cvc.term_eq tm glob mem)
                [ 0; 1; 2; 3; 4; 5; 6; 7 ])
-         c
+         combination
 
-  let solver_specific_setup sp spec_terms inst_terms sort =
-    let tm = fst sp in
-    let solver = Util.Cvc.new_solver sp in
-
+  (* Generic setup that has to happen in-order *and* out-of-order, but depends on a solver *)
+  let solver_specific_setup tm solver spec_terms inst_terms sort =
     let decl_as_sygus tms =
       List.map
         (fun (i, m) ->
@@ -123,26 +123,15 @@ module Solver = struct
 
     (sy_spec_terms, sy_inst_terms, sygus_funcs_one, sygus_funcs_two)
 
-  let check_in_order sp (i1, i2) (r, g) (inst_terms, spec_terms) sort
+  let check_in_order (tm, verb) (i1, i2) (r, g) (inst_terms, spec_terms) sort
       combination =
-    let tm = fst sp in
-    let solver = Util.Cvc.new_solver sp in
 
-    let decl_as_sygus tms =
-      List.map
-        (fun (i, m) ->
-          ( i,
-            Util.Cvc.TermMap.map
-              (fun t -> Solver.declare_sygus_var solver (Term.to_string t) sort)
-              m ))
-        tms
-    in
-    let sy_spec_terms = decl_as_sygus spec_terms in
-    let sy_inst_terms = decl_as_sygus inst_terms in
+    let solver = Util.Cvc.new_solver tm verb in
+    let sy_spec_terms, sy_inst_terms, _, _ = solver_specific_setup tm solver spec_terms inst_terms sort in
 
     let spec_from_to p1 p2 spec =
       RGSpec.cvc_of_spec
-        ~b:
+        ~behaviour:
           (RGSpec.AssumeRegsUnchanged
              (access_primes p1 sy_inst_terms, access_primes p2 sy_inst_terms))
         tm
@@ -158,8 +147,9 @@ module Solver = struct
         inst
     in
 
-    let assume_transitions =
-      (* S0 to S1 over R *)
+    let assumes =
+      (* State Transitions:
+         S0 to S1 over R *)
       spec_from_to 0 1 r
       (* S1 to S2 over i1 *)
       @ inst_from_to 1 2 i1
@@ -169,33 +159,33 @@ module Solver = struct
       @ inst_from_to 3 4 i2
       (* S4 to S5 over R *)
       @ spec_from_to 4 5 r
+      (* Combination: *)
+      @ create_combination tm combination sy_spec_terms sy_inst_terms
     in
-    List.iter (Solver.add_sygus_assume solver) assume_transitions;
+    List.iter (Solver.add_sygus_assume solver) assumes;
 
-    let assume_combination =
-      create_combination tm combination sy_spec_terms sy_inst_terms
+    let constrains =
+      (* Guarantees: *)
+      spec_from_to 2 2 g
+      @ spec_from_to 4 4 g
     in
-    List.iter (Solver.add_sygus_assume solver) assume_combination;
-
-    let constrain_guarantees = spec_from_to 2 2 g @ spec_from_to 4 4 g in
-    List.iter (Solver.add_sygus_constraint solver) constrain_guarantees;
+    List.iter (Solver.add_sygus_constraint solver) constrains;
 
     Util.Cvc.add_dummy_sygus tm solver;
     let result = Solver.check_synth solver in
-    SynthResult.has_solution result
+    not (SynthResult.has_solution result)
 
-  let check_out_order sp (i1, i2) (r, _g) (inst_terms, spec_terms) sort
+  let check_out_order (tm, verb) (i1, i2) (r, g) (inst_terms, spec_terms) sort
       combination =
-    let tm = fst sp in
-    let solver = Util.Cvc.new_solver sp in
 
+    let solver = Util.Cvc.new_solver tm verb in
     let sy_spec_terms, sy_inst_terms, sy_funcs_one, sy_funcs_two =
-      solver_specific_setup sp spec_terms inst_terms sort
+      solver_specific_setup tm solver spec_terms inst_terms sort
     in
 
     let spec_from_to p1 p2 spec =
       RGSpec.cvc_of_spec
-        ~b:
+        ~behaviour:
           (RGSpec.AssumeRegsUnchanged
              (access_primes p1 sy_inst_terms, access_primes p2 sy_inst_terms))
         tm
@@ -211,9 +201,9 @@ module Solver = struct
         inst
     in
 
-    List.iter (compose print_endline Term.to_string) (spec_from_to 0 1 r);
-    let assume_transitions =
-      (* S0 to S1 over R *)
+    let assumes =
+      (* State Transitions:
+         S0 to S1 over R *)
       spec_from_to 0 1 r
       (* S1 to S2 over i2 *)
       @ inst_from_to 1 2 i2
@@ -223,22 +213,17 @@ module Solver = struct
       @ inst_from_to 3 4 i1
       (* S4 to S5 over R *)
       @ spec_from_to 4 5 r
+      (* S7 back to S5 over R *)
+      @ spec_from_to 7 5 r
+      (* Combination: *)
+      @ create_combination tm combination sy_spec_terms sy_inst_terms
     in
-    List.iter (Solver.add_sygus_assume solver) assume_transitions;
-    (* print_endline "assume tran";
-    List.iter (compose print_endline Term.to_string) assume_transitions; *)
-    let assume_combination =
-      create_combination tm combination sy_spec_terms sy_inst_terms
-    in
-    List.iter (Solver.add_sygus_assume solver) assume_combination;
+    List.iter (Solver.add_sygus_assume solver) assumes;
 
-    (* print_endline "assume comb";
-    List.iter (compose print_endline Term.to_string) assume_combination; *)
-    print_endline "ct";
-    let constrain_transitions =
+    let constrains =
       (* S0 to f0 over R *)
       RGSpec.cvc_of_spec
-        ~b:
+        ~behaviour:
           (RGSpec.ConstrainFuncsUnchanged
              (access_primes 0 sy_inst_terms, sy_funcs_one))
         tm
@@ -250,7 +235,7 @@ module Solver = struct
           i1
       (* S6 to f1 over R *)
       @ RGSpec.cvc_of_spec
-          ~b:
+          ~behaviour:
             (RGSpec.ConstrainFuncsUnchanged
                (access_primes 6 sy_inst_terms, sy_funcs_two))
           tm
@@ -260,20 +245,11 @@ module Solver = struct
       @ Lifter.cvc_of_stmtlist tm sy_funcs_two
           (access_primes 7 sy_inst_terms)
           i2
+      @ RGSpec.cvc_of_spec ~behaviour:Nothing tm sy_funcs_one sy_funcs_one g
+      @ RGSpec.cvc_of_spec ~behaviour:Nothing tm sy_funcs_two sy_funcs_two g
     in
-    List.iter (Solver.add_sygus_constraint solver) constrain_transitions;
+    List.iter (Solver.add_sygus_constraint solver) constrains;
 
-    print_endline "aft";
-    let assume_final_transition =
-      (* S7 back to S5 over R *)
-      spec_from_to 7 5 r
-    in
-    (* print_endline "assume tran";
-    List.iter (compose print_endline Term.to_string) assume_final_transition; *)
-    List.iter (Solver.add_sygus_assume solver) assume_final_transition;
-
-    (* print_endline "constrain tran";
-    List.iter (compose print_endline Term.to_string) constrain_transitions; *)
     let result = Solver.check_synth solver in
     not (SynthResult.has_solution result)
 
@@ -291,11 +267,17 @@ module Solver = struct
     let code = unpack_sem block_semantics pair in
     let rely, guarantee = spec in
 
+    let term_names (i1: Lifter.instruction_summary) (i2 : Lifter.instruction_summary) =
+      List.map Lifter.varSym (i1.read @ i1.write @ i2.read @ i2.write)
+      @ List.map (fun v -> "M" ^ Lifter.varSym v) (i1.load @ i1.store @ i2.load @ i2.store)
+    in
     let inst_terms =
       Util.Cvc.make_register_vars tm var_sort
-        (List.map Lifter.varSym
-           (Lifter.all_variables @@ unpack_sum block_semantics pair))
+      (uncurry term_names @@ unpack_sum block_semantics pair)
     in
+    print_endline "...";
+    List.iter (compose print_endline @@ compose Term.to_string snd) @@ Util.Cvc.TermMap.bindings inst_terms;
+    print_endline "...";
 
     let spec_names =
       RGSpec.collect_globs rely @ RGSpec.collect_globs guarantee
@@ -329,13 +311,13 @@ module Solver = struct
          all variables in the spec with 0-7 prime *)
     let terms = (inst_terms_primes, spec_terms_primes) in
     let all_possible_solver_combinations =
-      generate_combinations spec_names (subset_only_mem inst_terms)
+      generate_combinations spec_names inst_terms
     in
     let countall = List.length all_possible_solver_combinations in
 
     let valid_in_order =
       List.filter
-        (check_in_order sp code spec terms var_sort)
+        (compose not (check_in_order sp code spec terms var_sort))
         all_possible_solver_combinations
     in
 

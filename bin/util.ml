@@ -51,7 +51,7 @@ module Util = struct
     let find_glob map n = TermMap.find n map
     let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
 
-    let new_solver (tm, _verb) =
+    let new_solver tm verb =
       let solver = Cvc5.Solver.mk_solver ~logic:"ALL" tm in
       Cvc5.Solver.set_option solver "sygus" "true";
       Cvc5.Solver.set_option solver "full-sygus-verify" "true";
@@ -59,8 +59,9 @@ module Util = struct
       Cvc5.Solver.set_option solver "sygus-si" "all";
       Cvc5.Solver.set_option solver "incremental" "true";
 
+      if verb then (
       Cvc5.Solver.set_option solver "output" "sygus";
-      Cvc5.Solver.set_option solver "output" "sygus-enumerator";
+      Cvc5.Solver.set_option solver "output" "sygus-enumerator");
       solver
 
     (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0
@@ -78,5 +79,10 @@ module Util = struct
       in
       let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
       Cvc5.Solver.add_sygus_constraint solver (term_eq tm uf zero)
+
+    type terms_primes = (int * terms) list
+
+    let declare_as_sygus (terms : terms_primes) (solver : Cvc5.Solver.solver) (sort : Cvc5.Sort.sort) =
+      List.map (fun (i, m) -> (i, TermMap.map (fun t -> Cvc5.Solver.declare_sygus_var solver (Term.to_string t) sort) m)) terms
   end
 end
