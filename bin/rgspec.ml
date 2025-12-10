@@ -38,7 +38,7 @@ module RGSpec = struct
     | AssumeRegsUnchanged of (Util.Cvc.terms * Util.Cvc.terms)
     | Nothing
 
-  let cvc_of_spec ?(behaviour = Nothing) tm fromv tov spec =
+  let cvc_of_spec tm fromv tov spec =
     let rec subcall node =
       match node with
       | Term (k, ts) -> Term.mk_term tm k (Array.of_list @@ List.map subcall ts)
@@ -48,6 +48,7 @@ module RGSpec = struct
       | Post s -> Util.Cvc.find_glob tov s
     in
 
+    (* 
     let auto =
       match behaviour with
       | Nothing -> []
@@ -58,6 +59,6 @@ module RGSpec = struct
               else Some (Util.Cvc.term_eq tm v (Util.Cvc.TermMap.find k m2)))
             (Util.Cvc.TermMap.bindings m1)
     in
-
-    (subcall spec) :: auto
+    *)
+    [ subcall spec ]
 end

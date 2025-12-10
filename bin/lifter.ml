@@ -5,15 +5,17 @@ open Util
 
 module Lifter : sig
   module Blocks : Map.S with type key = bytes
+  module Instructions : Map.S with type key = int
 
   type var = Register of int | PC | SP | PSTATE | Global of int
 
-  type instruction_summary = {
+  type instruction = {
     read : var list;
     write : var list;
     load : var list;
     store : var list;
     fence : bool;
+    semantics : LibASL.Asl_ast.stmt list;
   }
 
   type edgetype = Linear | Call | Entry
@@ -23,21 +25,20 @@ module Lifter : sig
     name : string;
     offset : int;
     outgoing_edges : outgoing_edge list;
-    block_summary : (int * instruction_summary) list;
-    block_semantics : (int * LibASL.Asl_ast.stmt list) list;
+    instructions : instruction Instructions.t;
   }
 
   val opcode_length : int
   val parse : Rif.IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
-  val all_variables : instruction_summary * instruction_summary -> var list
+  val all_syms : instruction -> string list
   val varEq : var -> var -> bool
-  val varSym : var -> string
+  val varSym : ?mem:bool -> var -> string
 
-  val cvc_of_stmtlist :
+  val cvc_of_inst :
     Cvc5.TermManager.tm ->
     Util.Cvc.terms ->
     Util.Cvc.terms ->
-    LibASL.Asl_ast.stmt list ->
+    instruction ->
     Cvc5.Term.term list
 end = struct
   (* Protobuf types, shouldn't be needed outside *)
@@ -53,12 +54,13 @@ end = struct
   type p_code = Rif.CodeBlock.Gtirb.Proto.CodeBlock.t
   type var = Register of int | PC | SP | PSTATE | Global of int
 
-  type instruction_summary = {
+  type instruction = {
     read : var list;
     write : var list;
     load : var list;
     store : var list;
     fence : bool;
+    semantics : LibASL.Asl_ast.stmt list;
   }
 
   let varEq a b =
@@ -69,23 +71,27 @@ end = struct
     | Register ai, Register bi -> ai == bi
     | _, _ -> false
 
-  let varSym (v : var) =
-    match v with
-    | PC -> "PC"
-    | SP -> "SP"
-    | PSTATE -> "PSTATE"
-    | Register i -> "R" ^ string_of_int i
-    | Global i -> "G" ^ string_of_int i
+  let varSym ?(mem = false) (v : var) =
+    let s =
+      match v with
+      | PC -> "PC"
+      | SP -> "SP"
+      | PSTATE -> "PSTATE"
+      | Register i -> "R" ^ string_of_int i
+      | Global i -> "G" ^ string_of_int i
+    in
+    if mem then "M" ^ s else s
 
   type edgetype = Linear | Call | Entry
   type outgoing_edge = bytes * edgetype
+
+  module Instructions = Map.Make (Int)
 
   type blockdata = {
     name : string;
     offset : int;
     outgoing_edges : outgoing_edge list;
-    block_summary : (int * instruction_summary) list;
-    block_semantics : (int * LibASL.Asl_ast.stmt list) list;
+    instructions : instruction Instructions.t;
   }
 
   module Blocks = Map.Make (Bytes)
@@ -276,8 +282,15 @@ end = struct
         object (this)
           inherit Asl_visitor.nopAslVisitor
 
-          val mutable gathered_facts : instruction_summary =
-            { read = []; write = []; load = []; store = []; fence = false }
+          val mutable gathered_facts : instruction =
+            {
+              read = [];
+              write = [];
+              load = [];
+              store = [];
+              fence = false;
+              semantics = [];
+            }
 
           val mutable taints = []
           method get = gathered_facts
@@ -348,9 +361,6 @@ end = struct
                 this#addLoadRegs (this#subcontract addr);
                 ignore (Asl_visitor.visit_exprs this values);
                 SkipChildren
-            | Stmt_TCall (Ident n, _, _, _) ->
-                print_endline n;
-                DoChildren
             | _ -> DoChildren
 
           method! vexpr e =
@@ -395,6 +405,7 @@ end = struct
           method! vlexpr _ = DoChildren
         end
 
+      (* 
       class cleanup =
         object (_this)
           inherit Asl_visitor.nopAslVisitor
@@ -407,13 +418,14 @@ end = struct
                 ChangeTo addr
             | _ -> DoChildren
         end
+      *)
 
-      let collapse (ss : Asl_ast.stmt list) : instruction_summary =
+      let collapse (ss : Asl_ast.stmt list) : instruction =
         let c = new collector in
         ignore (Asl_visitor.visit_stmts c ss);
-        c#get
+        { (c#get) with semantics = ss }
 
-      let lift_one_op (address : int) (op : bytes) =
+      let lift_one_op ((address, op) : int * bytes) : Asl_ast.stmt list =
         let opcode = Printf.sprintf "0x%08lx" (Bytes.get_int32_be op 0) in
         (* Ignore unsupported opcodes *)
         match lift address opcode with
@@ -421,14 +433,10 @@ end = struct
         | exception _ ->
             print_endline "error";
             []
-
-      let convert (ss : Asl_ast.stmt list) : Asl_ast.stmt list =
-        let c = new cleanup in
-        Asl_visitor.visit_stmts c ss
     end
 
     let lift_block_from_interval (mod_endianness : bool) (cblock : p_code)
-        (i : p_interval) (block_offset : int) =
+        (i : p_interval) (block_offset : int) : instruction Instructions.t =
       let endian_reverse b =
         let len = Bytes.length b in
         let getrev i = Bytes.get b (len - 1 - i) in
@@ -447,12 +455,12 @@ end = struct
       let contents = Bytes.sub i.contents block_offset size in
       let opcodes = List.init num_opcodes (cut_opcodes contents) in
 
-      List.split
-        (List.map
-           (fun (i, op) ->
-             let ast = Asl_lib.lift_one_op i op in
-             ((i, Asl_lib.convert ast), (i, Asl_lib.collapse ast)))
-           opcodes)
+      List.fold_left
+        (fun acc i ->
+          Instructions.add (fst i)
+            (Asl_lib.collapse @@ Asl_lib.lift_one_op i)
+            acc)
+        Instructions.empty opcodes
   end
 
   (****************************************************************************************
@@ -485,15 +493,12 @@ end = struct
 
         let do_uuid (uuid : bytes) : blockdata =
           let offset, cblock = Lookup.expect_codeblock_by_uuid uuid i.blocks in
-          let semantics, summary =
-            Semantics.lift_block_from_interval needs_flipping cblock i offset
-          in
           {
             name = b64_bytes uuid;
             offset = offset + i.address;
             outgoing_edges = CFG.cfg_by_block uuid component_cfg;
-            block_semantics = semantics;
-            block_summary = summary;
+            instructions =
+              Semantics.lift_block_from_interval needs_flipping cblock i offset;
           }
         in
 
@@ -519,14 +524,19 @@ end = struct
           Blocks.empty e
     | None -> failwith "Internal error :("
 
-  let all_variables (s1, s2) : var list =
-    let unseen_var seen next =
-      match List.find_opt (varEq next) seen with
-      | Some _ -> seen
-      | None -> next :: seen
-    in
+  let all_registers (i : instruction) : var list =
+    List.sort_uniq
+      (fun a b -> String.compare (varSym a) (varSym b))
+      (i.read @ i.write)
 
-    List.fold_left unseen_var s1.read (s2.read @ s1.write @ s2.write @ s1.load @ s2.load @ s1.store @ s2.store)
+  let all_addresses (i : instruction) : var list =
+    List.sort_uniq
+      (fun a b -> String.compare (varSym a) (varSym b))
+      (i.load @ i.store)
+
+  let all_syms (i : instruction) : string list =
+    List.map varSym (all_registers i)
+    @ List.map (varSym ~mem:true) (all_addresses i)
 
   (****************************************************************************
    * Lifter to Cvc5
@@ -614,6 +624,16 @@ end = struct
             | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
                 if write then updated <- ("MR" ^ i) :: updated;
                 Util.Cvc.find_mem_reg (if write then tov else fromv) i
+            | Expr_TApply
+                ( FIdent ("add_bits", _),
+                  _,
+                  [
+                    Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i);
+                    Expr_LitBits _;
+                  ] ) ->
+                (* Collapse mem[R1 + X] into mem[R0] *)
+                if write then updated <- ("MR" ^ i) :: updated;
+                Util.Cvc.find_mem_reg (if write then tov else fromv) i
             | _ -> unexpected @@ Addr e
           in
 
@@ -691,6 +711,9 @@ end = struct
       end
   end
 
-  let cvc_of_stmtlist tm fromv tov stmts =
+  let semantics_to_cvc tm fromv tov stmts =
     (new Cvc.translator)#cvc_of_stmtlist tm fromv tov stmts
+
+  let cvc_of_inst tm fromv tov (i : instruction) =
+    semantics_to_cvc tm fromv tov i.semantics
 end

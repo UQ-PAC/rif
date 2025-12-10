@@ -4,11 +4,9 @@ open Lifter
 open Datalog
 open Solver
 open Rgspec
-open Util
 
 (* Argument parsing *)
 let component = ref "main"
-let style = ref "integers"
 let verb = ref false
 let input_gtirb = ref ""
 let rely = ref "true"
@@ -17,9 +15,6 @@ let guar = ref "true"
 let speclist =
   [
     ("--function", Arg.Set_string component, "the function to be RIF-checked");
-    ( "--solver-type",
-      Arg.Set_string style,
-      "the primary 'sort' to be used by the cvc5 solver" );
     ( "--rely",
       Arg.Set_string rely,
       "the rely-condition describing all other concurrent components" );
@@ -35,12 +30,6 @@ let argc = ref 0
 let args arg =
   argc := 1 + !argc;
   match !argc with 1 -> input_gtirb := arg | _ -> ()
-
-let cvcstyle : Solver.style =
-  match !style with
-  | "integers" -> Solver.Integers
-  | "bitvectors" -> Solver.BitVectors
-  | _ -> failwith "Bad solver type :("
 
 (* From UQ-PAC/gtirb_semantics *)
 let read_gtirb filename =
@@ -72,17 +61,18 @@ let () =
     exit 1);
 
   let ir = read_gtirb !input_gtirb in
-  let (all_block_semantics : Lifter.blockdata Lifter.Blocks.t) =
+  let (lifter_result : Lifter.blockdata Lifter.Blocks.t) =
     Lifter.parse ir !component !verb
   in
 
   let specification = RGSpec.input !rely !guar in
 
-  let bcount = Lifter.Blocks.cardinal all_block_semantics in
+  let bcount = Lifter.Blocks.cardinal lifter_result in
   let icount =
     Lifter.Blocks.fold
-      (fun _ (b : Lifter.blockdata) s -> s + List.length b.block_semantics)
-      all_block_semantics 0
+      (fun _ (b : Lifter.blockdata) s ->
+        s + (List.length @@ Lifter.Instructions.bindings b.instructions))
+      lifter_result 0
   in
   print_endline
     (Printf.sprintf
@@ -90,41 +80,25 @@ let () =
        (if bcount == 1 then "" else "s")
        icount !component);
 
+  let pair_result = Datalog.compute_reorderable_pairs lifter_result !verb in
+
   let reorderable_pairs =
-    Datalog.compute_reorderable_pairs all_block_semantics !verb
-  in
-
-  let get_actual_instructions (r : (int * int) list * (bytes * int) list) :
-      ((bytes * int) * (bytes * int)) list =
-    let pairs, map = r in
-    let find ins =
-      match List.find (fun (_, i) -> i == ins) map with b, _ -> b
-    in
-    let unaddress (uuid, ins) =
-      ( uuid,
-        (ins - (Lifter.Blocks.find uuid all_block_semantics).offset)
-        / Lifter.opcode_length )
-    in
-
     List.map
-      (fun (i1, i2) -> (unaddress (find i1, i1), unaddress (find i2, i2)))
-      pairs
+      (fun ((i1b, i1i), (i2b, i2i)) ->
+        let b1 = Lifter.Blocks.find i1b lifter_result in
+        let b2 = Lifter.Blocks.find i2b lifter_result in
+
+        if !verb then
+          print_endline
+            (Printf.sprintf "    [!] Could reorder %s.%i <-> %s.%i" b1.name i1i
+               b2.name i2i);
+
+        ( Lifter.Instructions.find i1i b1.instructions,
+          Lifter.Instructions.find i2i b2.instructions ))
+      pair_result
   in
 
-  let identifiable = get_actual_instructions reorderable_pairs in
-  if !verb then
-    List.iter
-      (fun ((b1, i1), (b2, i2)) ->
-        print_endline
-          (Printf.sprintf "    [!] Could reorder %s.%i <-> %s.%i" (b64_bytes b1)
-             i1 (b64_bytes b2) i2))
-      identifiable;
-
-  let failed =
-    List.filteri
-      (Solver.solve ~verb:!verb all_block_semantics cvcstyle specification)
-      identifiable
-  in
+  let failed = Solver.solve_all ~verb:!verb reorderable_pairs specification in
 
   if List.length failed == 0 then
     print_endline
