@@ -28,9 +28,10 @@ module Util = struct
     type terms = Term.term TermMap.t
     type primes = terms Primes.t
 
-    let nested_union =
-      Primes.union (fun _ v1 v2 ->
-          Some (TermMap.union (fun _ t _ -> Some t) v1 v2))
+    let nested_union (m1 : primes) (m2 : primes) : primes =
+      Primes.union
+        (fun _ t1 t2 -> Some (TermMap.union (fun _ _ t -> Some t) t1 t2))
+        m1 m2
 
     let make_term tm srt name = Term.mk_var_s tm srt name
 
@@ -76,7 +77,7 @@ module Util = struct
       (* if verb then Cvc5.Solver.set_option solver "output" "sygus"; *)
       solver
 
-    let solver_setup tm (terms : primes * primes * primes) sort =
+    let solver_setup tm (terms : primes * primes) sort =
       let solver = make_solver tm true in
 
       let make_sygus =
@@ -87,15 +88,11 @@ module Util = struct
               m)
       in
 
-      let sygus_spec, sygus_i1, sygus_i2 =
-        match terms with
-        | s, i1, i2 -> (make_sygus s, make_sygus i1, make_sygus i2)
+      let sygus_spec, sygus_inst =
+        match terms with s, i -> (make_sygus s, make_sygus i)
       in
 
-      let inst_terms = Primes.find 0 @@ nested_union sygus_i1 sygus_i2 in
-
-      ignore inst_terms;
-      (solver, sygus_spec, sygus_i1, sygus_i2)
+      (solver, sygus_spec, sygus_inst)
 
     (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0
        Functionally this is easy to solve, so it turns a sygus problem into a

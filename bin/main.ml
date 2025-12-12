@@ -100,7 +100,7 @@ let () =
 
   let failed = Solver.solve_all ~verb:!verb reorderable_pairs specification in
 
-  if List.length failed == 0 then
+  if List.length failed != 0 then
     print_endline
       "[!] SUCCESS: All reorderable instructions will uphold the R/G spec."
   else

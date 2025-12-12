@@ -4,20 +4,16 @@ open Util
 open Rgspec
 
 module Solver = struct
-  type three_primes = Util.Cvc.primes * Util.Cvc.primes * Util.Cvc.primes
+  type term_maps = Util.Cvc.primes * Util.Cvc.primes
 
-  let generate_combination_maps
-      ((spec_vars, inst_one_vars, inst_two_vars) : three_primes) :
+  let generate_aliasing_maps ((spec_vars, inst_vars) : term_maps) :
       (string * string) list list =
     let map_names m =
       List.map fst @@ Util.Cvc.TermMap.bindings @@ Util.Cvc.Primes.find 0 m
     in
 
     let spec_names = map_names spec_vars in
-    let inst_names =
-      List.sort_uniq String.compare
-        (map_names inst_one_vars @ map_names inst_two_vars)
-    in
+    let inst_names = List.sort_uniq String.compare @@ map_names inst_vars in
 
     (* Get only the names of memory-variables from the inst_vars *)
     let only_mem = List.filter (fun n -> Char.equal n.[0] 'M') inst_names in
@@ -52,11 +48,10 @@ module Solver = struct
        Also filter to ones where the mapping is complete. TODO: optimise this. *)
     List.filter (fun m -> List.length m == List.length only_mem) (pset cross)
 
-  (* Generate the constraints that connect all MR'x with <var>'x for this combination *)
-  let create_combination_terms tm (combination : (string * string) list)
-      (terms : three_primes) : Term.term list =
-    let spec_terms, i1, i2 = terms in
-    let inst_terms = Util.Cvc.nested_union i1 i2 in
+  (* Generate the constraints that connect all MR'x with <var>'x for this aliasing *)
+  let create_aliasing_terms tm (aliasing : (string * string) list)
+      (terms : term_maps) : Term.term list =
+    let spec_terms, inst_terms = terms in
     List.flatten
     @@ List.map
          (fun (i, s) ->
@@ -74,81 +69,86 @@ module Solver = struct
                  in
                  Util.Cvc.term_eq tm glob mem)
                [ 0; 1; 2; 3; 4; 5; 6; 7 ])
-         combination
+         aliasing
 
   let check_in_order ((i1, i2) : Lifter.instruction * Lifter.instruction)
-      ((rely, guar) : RGSpec.speclang * RGSpec.speclang) (terms : three_primes)
-      (tm, sort) (combination : (string * string) list) : bool =
-    let solver, spec, i1t, i2t = Util.Cvc.solver_setup tm terms sort in
+      ((rely, guar) : RGSpec.speclang * RGSpec.speclang) (terms : term_maps)
+      (tm, sort) (aliasing : (string * string) list) : bool =
+    let solver, spec, inst = Util.Cvc.solver_setup tm terms sort in
     let spec_terms i = Util.Cvc.Primes.find i spec in
-    let inst_terms i =
-      Util.Cvc.Primes.find i @@ Util.Cvc.nested_union i1t i2t
-    in
+    let inst_terms i = Util.Cvc.Primes.find i inst in
+    let assume = List.iter (Solver.add_sygus_assume solver) in
+    let constrain = List.iter (Solver.add_sygus_constraint solver) in
 
-    let assumes =
-      (* State Transitions:
-         S0 to S1 over R, S1 to S2 over i1, etc *)
-      RGSpec.cvc_of_spec tm (spec_terms 0) (spec_terms 1) rely
-      @ Lifter.cvc_of_inst tm (inst_terms 1) (inst_terms 2) i1
-      @ RGSpec.cvc_of_spec tm (spec_terms 2) (spec_terms 3) rely
-      @ Lifter.cvc_of_inst tm (inst_terms 3) (inst_terms 4) i2
-      @ RGSpec.cvc_of_spec tm (spec_terms 4) (spec_terms 5) rely
-      (* Spec->Instruction "combination" *)
-      @ create_combination_terms tm combination (spec, i1t, i2t)
-    in
-    List.iter (Solver.add_sygus_assume solver) assumes;
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 0) (spec_terms 1) rely;
+    assume @@ Lifter.cvc_of_inst tm (inst_terms 1) (inst_terms 2) i1;
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 2) (spec_terms 3) rely;
+    assume @@ Lifter.cvc_of_inst tm (inst_terms 3) (inst_terms 4) i2;
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 4) (spec_terms 5) rely;
 
-    let constrains =
-      (* Guarantees: *)
-      RGSpec.cvc_of_spec tm (spec_terms 1) (spec_terms 2) guar
-      @ RGSpec.cvc_of_spec tm (spec_terms 3) (spec_terms 4) guar
-    in
-    List.iter (Solver.add_sygus_constraint solver) constrains;
+    assume @@ create_aliasing_terms tm aliasing (spec, inst);
+
+    constrain @@ RGSpec.cvc_of_spec tm (spec_terms 1) (spec_terms 2) guar;
+    constrain @@ RGSpec.cvc_of_spec tm (spec_terms 3) (spec_terms 4) guar;
+
+    Util.Cvc.add_dummy_sygus tm solver;
+    let result = Solver.check_synth solver in
+    SynthResult.has_solution result
+
+  let check_out_order ((i1, i2) : Lifter.instruction * Lifter.instruction)
+      ((rely, guar) : RGSpec.speclang * RGSpec.speclang) (terms : term_maps)
+      (tm, sort) (aliasing : (string * string) list) : bool =
+    let solver, spec, inst = Util.Cvc.solver_setup tm terms sort in
+    let spec_terms i = Util.Cvc.Primes.find i spec in
+    let inst_terms i = Util.Cvc.Primes.find i inst in
+    let assume = List.iter (Solver.add_sygus_assume solver) in
+    let constrain = List.iter (Solver.add_sygus_constraint solver) in
+
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 0) (spec_terms 1) rely;
+    assume @@ Lifter.cvc_of_inst tm (inst_terms 1) (inst_terms 2) i2;
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 2) (spec_terms 3) rely;
+    assume @@ Lifter.cvc_of_inst tm (inst_terms 3) (inst_terms 4) i1;
+    assume @@ RGSpec.cvc_of_spec tm (spec_terms 4) (spec_terms 5) rely;
+
+    assume @@ create_aliasing_terms tm aliasing (spec, inst);
+
+    constrain @@ RGSpec.cvc_of_spec tm (spec_terms 1) (spec_terms 2) guar;
+    constrain @@ RGSpec.cvc_of_spec tm (spec_terms 3) (spec_terms 4) guar;
 
     Util.Cvc.add_dummy_sygus tm solver;
     let result = Solver.check_synth solver in
     SynthResult.has_solution result
 
   let solve (verb : bool) (pair : Lifter.instruction * Lifter.instruction)
-      (spec : RGSpec.speclang * RGSpec.speclang) cvc
-      (terms : Util.Cvc.primes * Util.Cvc.primes * Util.Cvc.primes) : bool =
-    let all_possible_solver_combinations = generate_combination_maps terms in
-    let countall = List.length all_possible_solver_combinations in
+      (spec : RGSpec.speclang * RGSpec.speclang) cvc (terms : term_maps) : bool
+      =
+    let all_possible_solver_aliasings = generate_aliasing_maps terms in
+    let countall = List.length all_possible_solver_aliasings in
     if verb then
-      print_endline
-        (Printf.sprintf "        [!] Identified %i combinations" countall);
+      print_endline (Printf.sprintf "    [!] Identified %i aliasings" countall);
 
     let valid_in_order =
       List.filter
         (check_in_order pair spec terms cvc)
-        all_possible_solver_combinations
+        all_possible_solver_aliasings
     in
     if verb then
       print_endline
-        (Printf.sprintf "        [!] %i combinations are valid-in-order"
+        (Printf.sprintf "    [!] %i aliasings are valid-in-order"
         @@ List.length valid_in_order);
 
-    let valid_out_order =
-      List.filter (check_out_order pair spec terms cvc) valid_in_order
+    let invalid_out_order =
+      List.filter
+        (compose not @@ check_out_order pair spec terms cvc)
+        valid_in_order
     in
     if verb then
       print_endline
-        (Printf.sprintf "        [!] %i combinations are valid-out-of-order"
-        @@ List.length valid_out_order);
-
-    List.length valid_in_order == List.length valid_out_order
+        (Printf.sprintf "    [!] %i aliasings failed out-of-order"
+        @@ List.length invalid_out_order);
+    List.length invalid_out_order == 0
 
   (*
-    let invalid_out_order =
-      List.filter (check_out_order pair spec terms cvc) valid_in_order
-    in
-
-    if verb then
-      print_endline
-        (Printf.sprintf "    [!] %i/%i address mappings are valid out-of-order"
-           (countall - List.length invalid_out_order)
-           countall);
-
     if List.length invalid_out_order != 0 then
       print_endline
         (Printf.sprintf "[!] Failed for mappings:\n    %s"
@@ -162,9 +162,6 @@ module Solver = struct
                             (if String.equal s1 "" then "{any var}" else s1))
                         m))
                  invalid_out_order)));
-
-    (* If these are different then at least one valid in-order combination couldn't prove validity out-of-order *)
-    List.length invalid_out_order != 0
     *)
 
   let solve_all ~verb (pairs : (Lifter.instruction * Lifter.instruction) list)
@@ -213,14 +210,16 @@ module Solver = struct
 
     List.filteri
       (fun idx pair ->
-        ignore (Printf.sprintf "[!] Solving pair %i...\n" (idx + 1));
+        if verb then
+          print_endline (Printf.sprintf "[!] Solving pair %i..." (idx + 1));
         let spec = (rely, guar) in
         let cvc = (tm, var_sort) in
         let terms =
           ( spec_terms_primes,
-            filter_instruction_terms (fst pair),
-            filter_instruction_terms (snd pair) )
+            Util.Cvc.nested_union
+              (filter_instruction_terms (fst pair))
+              (filter_instruction_terms (snd pair)) )
         in
-        solve verb pair spec cvc terms)
+        not @@ solve verb pair spec cvc terms)
       pairs
 end
