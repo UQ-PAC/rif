@@ -10,5 +10,14 @@
   asli.libASL
   aslp_offline.pc_aarch64
   angstrom
-  ocamlgraph)
- (modules main lifter datalog util solver rgspec))
+  ocamlgraph
+
+  lifter
+  spec)
+ (modules
+   main
+   datalog
+   util
+   solver
+ )
+)

@@ -1,0 +1,11 @@
+(library
+  (public_name rif.lifter)
+  (name lifter)
+  (flags -w -27)
+  (modules lifter)
+  (libraries
+    yojson
+    base64
+    asli.libASL
+    aslp_offline.pc_aarch64)
+)

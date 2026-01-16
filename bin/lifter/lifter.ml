@@ -1,8 +1,6 @@
 (****************************************************************************************
   Wrapper around GTIRB serialised data, ASLp parsing, etc. Basically all the binary stuff.
 *)
-open Util
-
 module Lifter : sig
   module Blocks : Map.S with type key = bytes
   module Instructions : Map.S with type key = int
@@ -29,7 +27,7 @@ module Lifter : sig
   }
 
   val opcode_length : int
-  val parse : Rif.IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
+  val parse : IR.Gtirb.Proto.IR.t -> string -> bool -> blockdata Blocks.t
   val all_syms : instruction -> string list
   val varEq : var -> var -> bool
   val varSym : ?mem:bool -> var -> string
@@ -42,17 +40,19 @@ module Lifter : sig
     Cvc5.Term.term list
 end = struct
   (* Protobuf types, shouldn't be needed outside *)
-  type p_ir = Rif.IR.Gtirb.Proto.IR.t
-  type p_cfg = Rif.CFG.Gtirb.Proto.CFG.t
-  type p_cfgedge = Rif.CFG.Gtirb.Proto.Edge.t
-  type p_module = Rif.Module.Gtirb.Proto.Module.t
-  type p_bo = Rif.Module.Gtirb.Proto.ByteOrder.t
-  type p_symbol = Rif.Symbol.Gtirb.Proto.Symbol.t
-  type p_section = Rif.Section.Gtirb.Proto.Section.t
-  type p_interval = Rif.ByteInterval.Gtirb.Proto.ByteInterval.t
-  type p_block = Rif.ByteInterval.Gtirb.Proto.Block.t
-  type p_code = Rif.CodeBlock.Gtirb.Proto.CodeBlock.t
+  type p_ir = IR.Gtirb.Proto.IR.t
+  type p_cfg = CFG.Gtirb.Proto.CFG.t
+  type p_cfgedge = CFG.Gtirb.Proto.Edge.t
+  type p_module = Module.Gtirb.Proto.Module.t
+  type p_bo = Module.Gtirb.Proto.ByteOrder.t
+  type p_symbol = Symbol.Gtirb.Proto.Symbol.t
+  type p_section = Section.Gtirb.Proto.Section.t
+  type p_interval = ByteInterval.Gtirb.Proto.ByteInterval.t
+  type p_block = ByteInterval.Gtirb.Proto.Block.t
+  type p_code = CodeBlock.Gtirb.Proto.CodeBlock.t
   type var = Register of int | PC | SP | PSTATE | Global of int
+
+  let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
 
   type instruction = {
     read : var list;
@@ -185,8 +185,8 @@ end = struct
       in
 
       (* Follow calls-and-returns back to the original function. *)
-      let call_and_return (ct : Rif.CFG.Gtirb.Proto.EdgeType.t) (uuid : bytes) =
-        let (relevant_returntype : Rif.CFG.Gtirb.Proto.EdgeType.t) =
+      let call_and_return (ct : CFG.Gtirb.Proto.EdgeType.t) (uuid : bytes) =
+        let (relevant_returntype : CFG.Gtirb.Proto.EdgeType.t) =
           match ct with
           | Type_Call -> Type_Return
           | Type_Syscall -> Type_Sysret
