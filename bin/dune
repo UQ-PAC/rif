@@ -9,5 +9,6 @@
   datalog.caml_interface
   asli.libASL
   aslp_offline.pc_aarch64
-  angstrom)
+  angstrom
+  ocamlgraph)
  (modules main lifter datalog util solver rgspec))

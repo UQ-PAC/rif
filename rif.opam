@@ -17,6 +17,7 @@ depends: [
   "yojson"
   "base64"
   "angstrom"
+  "ocamlgraph"
   "odoc" {with-doc}
 ]
 build: [

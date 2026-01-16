@@ -26,6 +26,7 @@
    "yojson"
    "base64"
    "angstrom"
+   "ocamlgraph"
  )
  (tags (decompiler static-analysis formal-methods))
 )
