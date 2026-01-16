@@ -1,5 +1,5 @@
 module type LifterElf = sig
-  val parse : unit
+  val make_byte_cfg : unit
 end
 
 module LifterElf : LifterElf = struct
@@ -15,6 +15,9 @@ module LifterElf : LifterElf = struct
   type p_interval = ByteInterval.Gtirb.Proto.ByteInterval.t
   type p_block = ByteInterval.Gtirb.Proto.Block.t
   type p_code = CodeBlock.Gtirb.Proto.CodeBlock.t
+
+  let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
+  let bytes_b64 b = Bytes.of_string (Base64.decode_exn b)
 
   let symbol_to_uuid (syms : p_symbol list) (name : string) : bytes =
     let symbol_by_name (ss : p_symbol list) (name : string) : p_symbol =
@@ -61,6 +64,7 @@ module LifterElf : LifterElf = struct
         i.blocks
 
   module CFG = struct
+    type edgetype = Linear | Call | Entry
     (* Internal, pre-map CFG type *)
     type edge = bytes * bytes * edgetype
     type cfg = edge list
@@ -87,7 +91,7 @@ module LifterElf : LifterElf = struct
        Therefore, filter cfgedges to those pointing back towards the given interval.
      *)
       let in_interval u =
-        let interval_uuids = Lookup.interval_codeblock_uuids interval in
+        let interval_uuids = interval_codeblock_uuids interval in
         let opt = List.find_opt (Bytes.equal u) interval_uuids in
         match opt with Some _ -> true | _ -> false
       in
@@ -167,4 +171,7 @@ module LifterElf : LifterElf = struct
       in
       List.filter_map matches cfg
   end
+
+
+  let make_byte_cfg = ()
 end

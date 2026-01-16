@@ -3,17 +3,14 @@
  (name main)
  (libraries
   rif
-  yojson
-  base64
   datalog
   datalog.caml_interface
 
   lifter
+  solver
   spec)
  (modules
    main
    datalog
-   util
-   solver
  )
 )

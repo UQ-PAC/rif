@@ -3,7 +3,7 @@ open Rif
 (****************************************************************************************
   Wrapper around GTIRB serialised data, ASLp parsing, etc. Basically all the binary stuff.
 *)
-module Lifter : sig
+module type Lifter = sig
   module Blocks : Map.S with type key = bytes
   module Instructions : Map.S with type key = int
 
@@ -40,8 +40,9 @@ module Lifter : sig
     Util.Cvc.terms ->
     instruction ->
     Cvc5.Term.term list
-end = struct
-  (* Protobuf types, shouldn't be needed outside *)
+end
+
+module Lifter = struct
   type var = Register of int | PC | SP | PSTATE | Global of int
 
   let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
