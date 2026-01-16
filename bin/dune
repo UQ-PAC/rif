@@ -7,10 +7,6 @@
   base64
   datalog
   datalog.caml_interface
-  asli.libASL
-  aslp_offline.pc_aarch64
-  angstrom
-  ocamlgraph
 
   lifter
   spec)

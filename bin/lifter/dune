@@ -2,10 +2,12 @@
   (public_name rif.lifter)
   (name lifter)
   (flags -w -27)
-  (modules lifter)
+  (modules lifter_elf lifter_disassembly lifter)
   (libraries
     yojson
     base64
     asli.libASL
-    aslp_offline.pc_aarch64)
+    aslp_offline.pc_aarch64
+    ocaml-protoc-plugin
+    rif.proto)
 )

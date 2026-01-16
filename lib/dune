@@ -1,5 +1,6 @@
 (library
  (name rif)
+ (public_name rif.proto)
  (libraries ocaml-protoc-plugin cvc5))
 
 (rule
