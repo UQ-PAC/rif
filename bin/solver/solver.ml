@@ -1,7 +1,5 @@
 open Cvc5
-open Lifter
 open Util
-open Rgspec
 
 module Solver = struct
   type term_maps = Util.Cvc.primes * Util.Cvc.primes

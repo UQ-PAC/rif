@@ -1,5 +1,3 @@
-let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
-let bytes_b64 b = Bytes.of_string (Base64.decode_exn b)
 let uncurry f (x, y) = f x y
 let compose f g x = f (g x)
 let contains f l = match List.find_opt f l with Some _ -> true | _ -> false

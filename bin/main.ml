@@ -1,5 +1,3 @@
-open Ocaml_protoc_plugin
-open Rif.IR.Gtirb.Proto
 open Lifter
 open Datalog
 open Solver
@@ -35,26 +33,6 @@ let args arg =
   match !argc with 1 -> input_gtirb := arg | _ -> ()
 
 (* From UQ-PAC/gtirb_semantics *)
-let read_gtirb filename =
-  let bytes_in =
-    let gtirb = open_in_bin filename in
-    let len = in_channel_length gtirb in
-    let magic = really_input_string gtirb 8 in
-    let rest = really_input_string gtirb (len - 8) in
-    let res =
-      if String.starts_with ~prefix:"GTIRB" magic then rest else magic ^ rest
-    in
-    close_in gtirb;
-    res
-  in
-  let gtirb = IR.from_proto (Reader.create bytes_in) in
-  match gtirb with
-  | Ok a -> a
-  | Error e ->
-      failwith
-        (Printf.sprintf "Bad IR: could not reply request: %s"
-           (Ocaml_protoc_plugin.Result.show_error e))
-
 (* MAIN *)
 let () =
   (* Memtrace.trace_if_requested ~context:"UQ-PAC/rif" (); *)

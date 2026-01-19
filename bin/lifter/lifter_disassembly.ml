@@ -1,103 +1,89 @@
+open Lifter_ir
+
 module type LifterDisassembly = sig
-  val opcode_length : int
 end
 
 module LifterDisassembly = struct
   open LibASL
 
-  let opcode_length = 4
+  class collector = object (this)
+    inherit Asl_visitor.nopAslVisitor
+    val mutable gathered_facts : LifterIR.instruction =
+      {
+        read = [];
+        write = [];
+        load = [];
+        store = [];
+        fence = false;
+        semantics = [];
+      }
 
-  let env =
-    match Arm_env.aarch64_evaluation_environment () with
-    | Some e -> e
-    | None -> failwith "AAA"
+    val mutable taints = []
+    method get = gathered_facts
 
-  let lift _pc op = Dis.retrieveDisassembly env (Dis.build_env env) op
+    (* maintain uniqueness in our gathered facts *)
+    method addReadReg (v : var) =
+      match List.find_opt (varEq v) gathered_facts.read with
+      | None ->
+        gathered_facts <- { gathered_facts with read = v :: gathered_facts.read }
+      | _ -> ()
 
-    class collector =
-      object (this)
-        inherit Asl_visitor.nopAslVisitor
+    method addWriteReg (v : var) =
+      match List.find_opt (varEq v) gathered_facts.write with
+      | None ->
+        gathered_facts <- { gathered_facts with write = v :: gathered_facts.write }
+      | _ -> ()
 
-        val mutable gathered_facts : instruction =
-          {
-            read = [];
-            write = [];
-            load = [];
-            store = [];
-            fence = false;
-            semantics = [];
-          }
+    method addLoadReg (v : var) =
+      match List.find_opt (varEq v) gathered_facts.load with
+      | None ->
+        gathered_facts <- { gathered_facts with load = v :: gathered_facts.load }
+      | _ -> ()
 
-        val mutable taints = []
-        method get = gathered_facts
+    method addLoadRegs (vs : var list) = List.iter this#addLoadReg vs
 
-        (* maintain uniqueness in our gathered facts *)
-        method addReadReg (v : var) =
-          match List.find_opt (varEq v) gathered_facts.read with
-          | None ->
-              gathered_facts <-
-                { gathered_facts with read = v :: gathered_facts.read }
-          | _ -> ()
+    method addStoreReg (v : var) =
+      match List.find_opt (varEq v) gathered_facts.store with
+      | None ->
+        gathered_facts <- { gathered_facts with store = v :: gathered_facts.store }
+      | _ -> ()
 
-        method addWriteReg (v : var) =
-          match List.find_opt (varEq v) gathered_facts.write with
-          | None ->
-              gathered_facts <-
-                { gathered_facts with write = v :: gathered_facts.write }
-          | _ -> ()
+    method addStoreRegs (vs : var list) = List.iter this#addStoreReg vs
 
-        method addLoadReg (v : var) =
-          match List.find_opt (varEq v) gathered_facts.load with
-          | None ->
-              gathered_facts <-
-                { gathered_facts with load = v :: gathered_facts.load }
-          | _ -> ()
+    method sanityOnlyRead =
+      if
+        List.length gathered_facts.write > 0
+        || List.length gathered_facts.load > 0
+        || List.length gathered_facts.store > 0
+      then failwith "Internal error :(";
+      gathered_facts.read
 
-        method addLoadRegs (vs : var list) = List.iter this#addLoadReg vs
-
-        method addStoreReg (v : var) =
-          match List.find_opt (varEq v) gathered_facts.store with
-          | None ->
-              gathered_facts <-
-                { gathered_facts with store = v :: gathered_facts.store }
-          | _ -> ()
-
-        method addStoreRegs (vs : var list) = List.iter this#addStoreReg vs
-
-        method sanityOnlyRead =
-          if
-            List.length gathered_facts.write > 0
-            || List.length gathered_facts.load > 0
-            || List.length gathered_facts.store > 0
-          then failwith "Internal error :(";
-          gathered_facts.read
-
-        method! vstmt s =
-          match s with
-          (* Assign to register, stack pointer, program counter, or PSTATE *)
-          | Stmt_Assign
-              (LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i), _, _) ->
-              this#addWriteReg (mkReg i);
-              DoChildren
-          | Stmt_Assign (LExpr_Var (Ident "SP_EL0"), _, _) ->
-              this#addWriteReg SP;
-              DoChildren
-          | Stmt_Assign (LExpr_Var (Ident "_PC"), _, _) ->
-              this#addWriteReg PC;
-              DoChildren
-          | Stmt_Assign (LExpr_Field (LExpr_Var (Ident "PSTATE"), _), _, _) ->
-              this#addWriteReg PSTATE;
-              DoChildren
-          (* Calls to memory-affecting functions; mark it *)
-          | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: values, _) ->
-              this#addStoreRegs (this#subcontract addr);
-              ignore (Asl_visitor.visit_exprs this values);
-              SkipChildren
-          | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
-              this#addLoadRegs (this#subcontract addr);
-              ignore (Asl_visitor.visit_exprs this values);
-              SkipChildren
-          | _ -> DoChildren
+    method! vstmt s =
+      match s with
+      (* Assign to register, stack pointer, program counter, or PSTATE *)
+      | Stmt_Assign
+          (LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i), _, _) ->
+          this#addWriteReg (mkReg i);
+          DoChildren
+      | Stmt_Assign (LExpr_Var (Ident "SP_EL0"), _, _) ->
+          this#addWriteReg SP;
+          DoChildren
+      | Stmt_Assign (LExpr_Var (Ident "_PC"), _, _) ->
+          this#addWriteReg PC;
+          DoChildren
+      | Stmt_Assign (LExpr_Field (LExpr_Var (Ident "PSTATE"), _), _, _) ->
+          this#addWriteReg PSTATE;
+          DoChildren
+      (* Calls to memory-affecting functions; mark it *)
+      | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: values, _) ->
+          this#addStoreRegs (this#subcontract addr);
+          ignore (Asl_visitor.visit_exprs this values);
+          SkipChildren
+      | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
+          this#addLoadRegs (this#subcontract addr);
+          ignore (Asl_visitor.visit_exprs this values);
+          SkipChildren
+      | _ -> DoChildren
 
         method! vexpr e =
           match e with
@@ -141,7 +127,18 @@ module LifterDisassembly = struct
         method! vlexpr _ = DoChildren
       end
 
-    (* 
+
+
+  let env =
+    match Arm_env.aarch64_evaluation_environment () with
+    | Some e -> e
+    | None -> failwith "AAA"
+
+  let lift _pc op = 
+    let env = Arm_env.aarch64_evaluation_environment () |> Option.get in
+    Dis.retrieveDisassembly env (Dis.build_env env) op
+
+  (* 
     class cleanup =
       object (_this)
         inherit Asl_visitor.nopAslVisitor
@@ -154,9 +151,9 @@ module LifterDisassembly = struct
               ChangeTo addr
           | _ -> DoChildren
       end
-    *)
+  *)
 
-    let collapse (ss : Asl_ast.stmt list) : instruction =
+    let collapse (ss : Asl_ast.stmt list) : LifterIR.instruction =
       let c = new collector in
       ignore (Asl_visitor.visit_stmts c ss);
       { (c#get) with semantics = ss }
@@ -169,4 +166,5 @@ module LifterDisassembly = struct
       | exception _ ->
           print_endline "error";
           []
-  end
+
+end

@@ -2,7 +2,10 @@
   (public_name rif.solver)
   (name solver)
   (flags -w -27)
-  (modules solver_instruction util solver)
+  (modules solver_instruction solver_util solver)
   (libraries
-    cvc5)
+    cvc5
+    asli.libASL
+    lifter
+    spec)
   )

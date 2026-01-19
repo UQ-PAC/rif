@@ -43,7 +43,7 @@ module SpecAnalysis : SpecAnalysis = struct
   let nodes spec =
     SpecLang.M.bindings spec |>
     List.map fst |>
-    List.fold_left (fun gr name -> G.add_vertex gr name) G.empty
+    List.fold_left G.add_vertex G.empty
 
   let edges spec graph =
     SpecLang.M.bindings spec |>
