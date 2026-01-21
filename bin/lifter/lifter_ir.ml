@@ -2,9 +2,10 @@ open LibASL
 
 module type LifterIR = sig
   type var = Register of int | PC | SP | PSTATE
-  val string_of_var : var -> string
-  val var_of_string : string -> var
-  val var_eq : var -> var -> bool
+
+  type edgetype = Linear | Branch | Entry
+  type edge = string * edgetype
+  type edges = edge list
 
   type instruction = {
     read : var list;
@@ -14,23 +15,22 @@ module type LifterIR = sig
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
   }
-
-  val instruction_syms : instruction -> string list
-
-  type edgetype = Linear | Call | Entry
-  type outgoing_edge = string * edgetype
-
   module I : Map.S with type key = int
 
-  type blockdata = {
+  type block = {
     name : string;
     offset : int;
-    outgoing_edges : outgoing_edge list;
+    edges : edges;
     instructions : instruction I.t;
   }
   module B : Map.S with type key = string
 
-  type blocks = blockdata B.t
+  type blocks = block B.t
+
+  val string_of_var : var -> string
+  val var_of_string : string -> var
+  val var_eq : var -> var -> bool
+  val instruction_syms : instruction -> string list
 end
 
 module LifterIR : LifterIR = struct
@@ -64,17 +64,19 @@ module LifterIR : LifterIR = struct
   }
 
   let instruction_syms i =
-    List.map (fun v -> string_of_var v |> (^) "M") (i.load @ i.store)
+    (List.map (fun v -> string_of_var v |> (^) "M") (i.load @ i.store)) @
+    (List.map string_of_var (i.read @ i.write))
 
-  type edgetype = Linear | Call | Entry
-  type outgoing_edge = string * edgetype
+  type edgetype = Linear | Branch | Entry
+  type edge = string * edgetype
+  type edges = edge list
 
-  type blockdata = {
+  type block = {
     name : string;
     offset : int;
-    outgoing_edges : outgoing_edge list;
+    edges : edges;
     instructions : instruction I.t;
   }
 
-  type blocks = blockdata B.t
+  type blocks = block B.t
 end

@@ -2,14 +2,15 @@ open Ocaml_protoc_plugin
 open Lifter_ir
 
 module type LifterElf = sig
-  type elf_blockdata = {
+  type extracted_block = {
     name : string;
     address : int;
-    edges : string list;
+    edges : LifterIR.edges;
     instructions : (int * bytes) list;
   }
+
   module B : Map.S with type key = string
-  type blocks = elf_blockdata B.t
+  type blocks = extracted_block B.t
 
   val parse : string -> string -> bool -> blocks option
 end
@@ -89,51 +90,65 @@ module LifterElf : LifterElf = struct
         i.blocks
   end
 
- type elf_blockdata = {
+ type extracted_block = {
     name : string;
     address : int;
-    edges : string list;
+    edges : LifterIR.edges;
     instructions : (int * bytes) list;
   }
   module B = Map.Make (String)
-  type blocks = elf_blockdata B.t
+  type blocks = extracted_block B.t
 
   module CFG = struct
-    open Graph
-
     open CFG.Gtirb.Proto
     type p_edge = Edge.t
     type p_edgelabel = EdgeLabel.t
     type p_edgetype = EdgeType.t
 
-    module Node = struct
-      type t = bytes
-      let compare = Bytes.compare
-      let equal = Bytes.equal
-      let hash = Hashtbl.hash
-      let fold_vertex = failwith "A"
-    end
+    module G = Map.Make (String)
+    module S = Set.Make (struct
+      type t = LifterIR.edge
+      let compare = compare
+    end)
 
-    module Edge = struct
-      type t = p_edgetype
-      let compare (a : t) (b : t) = compare a b
-      let equal a b = 0 == compare a b
-      let hash = Hashtbl.hash
-      let default = EdgeType.Type_Fallthrough
-    end
+    type t = S.t G.t
 
-    module G = Persistent.Digraph.ConcreteLabeled (Node) (Edge)
-    module L = Leaderlist.Make (G)
+    let induce_graph (g : p_cfg) : t =
+      let add k v acc =
+        let sv = match G.find_opt k acc with
+        | Some s -> S.add v s
+        | None -> S.singleton v in
+        G.add k sv acc
+      in
 
-    let induce_graph (g : p_cfg) : G.t =
-      let nodes = List.fold_left G.add_vertex G.empty g.vertices in
-      List.fold_left (fun g (e : p_edge) -> G.add_edge g e.source_uuid e.target_uuid) nodes g.edges
+      List.fold_left (fun acc (e : p_edge) ->
+        let k = b64_bytes e.source_uuid in
+        let v = b64_bytes e.target_uuid in
+        match e.label with
+        | Some t -> (
+          match t.type' with
+          | EdgeType.Type_Fallthrough -> add k (v, LifterIR.Linear) acc
+          | EdgeType.Type_Branch -> add k (v, LifterIR.Branch) acc
+          | _ -> acc
+        )
+        | None -> acc
+      ) G.empty g.edges
 
-    let component_subgraph uuid g = L.leader_lists (induce_graph g) uuid
-    let filter g _ = g
-    let outgoing_edges g uuid = G.succ_e g uuid |> List.map (fun (_, _, v) -> b64_bytes v)
+    let filter (is : string list) (g : t) : t =
+      (* filter the sets for edges inside the interval *)
+      G.map (fun v ->
+        S.filter_map (fun edge ->
+          List.find_opt (String.equal @@ fst edge) is |> Option.map (fun _ -> edge)
+        ) v
+      ) g
+      (* filter the map for non-empty sets and values inside the interval *)
+      |>
+      G.filter (fun k v ->
+        List.find_opt ((==) k) is |> Option.is_some && not @@ S.is_empty v)
 
-    let make_map f g = G.fold_vertex (fun v m -> B.add (b64_bytes v) (f v) m) g B.empty
+    let edges k map =
+      let set = G.find k map in
+      S.fold List.cons set []
   end
 
   let opcode_length = 4
@@ -177,16 +192,22 @@ module LifterElf : LifterElf = struct
         (* Cause Not_found and return None if we aren't in the right interval yet *)
         ignore @@ GtirbLookups.uuid_to_block component_block_uuid i.blocks;
 
-        let component_cfg = CFG.filter cfg @@ GtirbLookups.interval_codeblock_uuids i in
-        CFG.make_map (fun uuid ->
+        let uuids = GtirbLookups.interval_codeblock_uuids i in
+        let component_cfg = CFG.filter (List.map b64_bytes uuids) cfg in
+
+        List.fold_left (fun acc uuid ->
           let offset, cblock = GtirbLookups.uuid_to_block uuid i.blocks in
-          {
-            name = b64_bytes uuid;
+          let name = b64_bytes uuid in
+
+          let block : extracted_block = {
+            name = name;
             address = offset + i.address;
-            edges = CFG.outgoing_edges component_cfg uuid;
+            edges = CFG.edges name component_cfg;
             instructions = split_instructions ~do_reverse:do_reverse i.address offset cblock.size i.contents
-          }
-        ) component_cfg
+          } in
+
+          B.add name block acc
+        ) B.empty uuids
       ) with Not_found -> None
     in
 
