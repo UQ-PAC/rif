@@ -6,15 +6,6 @@ let ( => ) = fun a b -> (not a) || b
 type specmode = Easy | Safe
 
 module Util = struct
-  module Aslp = struct
-    open LibASL
-
-    let pp_stmt = compose print_endline Asl_utils.pp_stmt
-    let pp_expr = compose print_endline Asl_utils.pp_expr
-    let pp_type = compose print_endline Asl_utils.pp_type
-    let pp_lexpr = compose print_endline Asl_utils.pp_lexpr
-  end
-
   module Cvc = struct
     open Cvc5
 
@@ -30,27 +21,6 @@ module Util = struct
 
     let ordinary_trans = ordinary_rely @ ordinary_inst
     let function_trans = function_rely @ function_inst
-
-    let rxp = Str.regexp {|(|f_\([MR0-9'_]+\)| [^)]+)|}
-    let doRxp = false
-
-    let pp_assume t =
-      Term.to_string t |> fun s ->
-      if String.equal s "true" then ()
-      else
-        (match doRxp with true -> (Str.global_replace rxp {|(|f_\1| ...)|} s) | false -> s)
-        |> Printf.sprintf "(assume %s)" |> print_endline;
-      t
-
-    let pp_constrain t =
-      Term.to_string t |> fun s ->
-      if String.equal s "true" then ()
-      else
-        (match doRxp with true -> (Str.global_replace rxp {|(|f_\1| ...)|} s) | false -> s)
-        |> Printf.sprintf "(constraint %s)" |> print_endline;
-      t
-
-    let pp_term = compose print_endline Term.to_string
 
     module TermMap = Map.Make (String)
     module Primes = Map.Make (Int)
@@ -94,23 +64,8 @@ module Util = struct
       TermMap.find ("MR" ^ i) map
 
     let find_glob map n = TermMap.find n map
-    let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
 
     let make_solver tm verb =
-      let solver = Cvc5.Solver.mk_solver ~logic:"ALL" tm in
-      Cvc5.Solver.set_option solver "sygus" "true";
-      Cvc5.Solver.set_option solver "sygus-out" "status-and-def";
-      Cvc5.Solver.set_option solver "sygus-enum" "fast";
-      Cvc5.Solver.set_option solver "sygus-si" "all";
-      Cvc5.Solver.set_option solver "sygus-stream" "true";
-
-      Cvc5.Solver.set_option solver "full-sygus-verify" "true";
-      Cvc5.Solver.set_option solver "sygus-core-connective" "true";
-      Cvc5.Solver.set_option solver "incremental" "false";
-
-      if verb then Cvc5.Solver.set_option solver "output" "sygus";
-      solver
-
     let solver_setup tm ?(doMakeFuncs = false) (terms : primes * primes) sort =
       let solver = make_solver tm true in
 
@@ -165,18 +120,6 @@ module Util = struct
     (* Adds a dummy sygus problem: create a function f(x) s.t. f(0) = 0
        Functionally this is easy to solve, so it turns a sygus problem into a
        regular sat problem over the constraints. *)
-    let add_dummy_sygus tm solver sort =
-      let zero = Term.mk_int tm 0 in
-
-      let dummy_in = Term.mk_var_s tm sort "dummy_in" in
-      let s =
-        Cvc5.Solver.synth_fun solver tm "dummy"
-          (Array.of_list [ dummy_in ])
-          sort None
-      in
-      let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
-      Cvc5.Solver.add_sygus_constraint solver (term_eq tm uf zero)
-
     type terms_primes = (int * terms) list
 
     let declare_as_sygus (terms : terms_primes) (solver : Cvc5.Solver.solver)

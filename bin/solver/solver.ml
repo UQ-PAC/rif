@@ -1,5 +1,8 @@
 open Cvc5
-open Util
+open Lifter
+open Spec
+
+open Solver_util
 
 module Solver = struct
   type term_maps = Util.Cvc.primes * Util.Cvc.primes
@@ -69,8 +72,8 @@ module Solver = struct
       aliasing
     |> List.flatten
 
-  let check_in_order ((i1, i2) : Lifter.instruction * Lifter.instruction)
-      ((rely, guar) : RGSpec.speclang * RGSpec.speclang) (terms : term_maps)
+  let check_in_order ((i1, i2) : Lifter.IR.instruction * Lifter.IR.instruction)
+      ((rely, guar) : Spec.Lang.spec * Spec.Lang.spec) (terms : term_maps)
       (tm, sort) (aliasing : (string * string) list) : bool =
     let solver, spec, inst = Util.Cvc.solver_setup tm terms sort in
     let spec_terms i = Util.Cvc.Primes.find i spec in
@@ -174,7 +177,7 @@ module Solver = struct
     let result = Solver.check_synth solver in
     SynthResult.has_solution result
 
-  let solve (verb : bool) (mode : mode) (pair : Lifter.instruction * Lifter.instruction)
+  let solve (verb : bool) (mode : mode) (pair : Lifter.IR.instruction * Lifter.IR.instruction)
       (spec : RGSpec.speclang * RGSpec.speclang) cvc (terms : term_maps) : bool
       =
     let all_possible_solver_aliasings = generate_aliasing_maps terms in
