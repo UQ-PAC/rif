@@ -148,29 +148,37 @@ module LifterDisassembly = struct
       end
   *)
 
-    let collapse (ss : Asl_ast.stmt list) : LifterIR.instruction =
-      let c = new collector in
-      ignore (Asl_visitor.visit_stmts c ss);
-      { (c#get) with semantics = ss }
+  let collapse (ss : Asl_ast.stmt list) : LifterIR.instruction =
+    let c = new collector in
+    ignore (Asl_visitor.visit_stmts c ss);
+    { (c#get) with semantics = ss }
 
-    let lift_one_op ((address, op) : int * bytes) : Asl_ast.stmt list =
-      let opcode = Printf.sprintf "0x%08lx" (Bytes.get_int32_be op 0) in
-      (* Ignore unsupported opcodes *)
-      match lift address opcode with
-      | result -> result
-      | exception _ ->
-          print_endline "error";
-          []
+  let lift_one_op ((address, op) : int * bytes) : Asl_ast.stmt list =
+    let opcode = Printf.sprintf "0x%08lx" (Bytes.get_int32_be op 0) in
+    (* Ignore unsupported opcodes *)
+    match lift address opcode with
+    | result -> result
+    | exception _ ->
+        print_endline "error";
+        []
+
+  let lift_and_summarise addr op =
+    lift_one_op (addr, op) |> collapse
 
   let lift_all map =
     LifterElf.B.bindings map |>
     List.fold_left (fun acc (k, v) ->
+      let do_instructions (is : (int * bytes) list) : LifterIR.instruction LifterIR.I.t =
+        List.fold_left (fun acc (k, v) -> 
+          LifterIR.I.add k (lift_and_summarise k v) acc) LifterIR.I.empty is
+      in
+
       let do_block (b : LifterElf.extracted_block) : LifterIR.block =
         {
-        name = b.name;
-        offset = b.address;
-        edges = b.edges;
-        instructions = LifterIR.I.empty
+          name = b.name;
+          offset = b.address;
+          edges = b.edges;
+          instructions = do_instructions b.instructions
         }
       in
 
