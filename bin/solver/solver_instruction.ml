@@ -1,3 +1,13 @@
+open Cvc5
+open Lifter
+open LibASL
+
+module type SolverInst = sig
+end
+
+module SolverInst : SolverInst = struct
+end
+
 module Cvc = struct
     open LibASL
     open Cvc5

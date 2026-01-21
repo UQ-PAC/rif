@@ -2,7 +2,7 @@ open Cvc5
 open Lifter
 open Spec
 
-open Solver_util
+open Solver_utils
 
 module Solver = struct
   type term_maps = Util.Cvc.primes * Util.Cvc.primes

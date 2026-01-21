@@ -1,12 +1,7 @@
 open Cvc5
 open LibASL
 
-module type SolverUtils = sig
-  type mode = Easy | Safe
-
-end
-
-module SolverUtils : SolverUtils = struct
+module SolverUtils = struct
   type mode = Easy | Safe
 
   let c f g x = f (g x)
@@ -36,6 +31,8 @@ module SolverUtils : SolverUtils = struct
         (match human with true -> (Str.global_replace rxp {|(|f_\1| ...)|} s) | false -> s)
         |> Printf.sprintf "(constraint %s)" |> print_endline;
       t
+
+    let pp_newterm name = Printf.sprintf "(declare-var %s Int)" name |> print_endline
   end
 
   let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
@@ -51,5 +48,4 @@ module SolverUtils : SolverUtils = struct
     in
     let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
     Cvc5.Solver.add_sygus_constraint solver (term_eq tm uf zero)
-
 end
