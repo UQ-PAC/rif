@@ -9,7 +9,6 @@ let verb = ref false
 let input_gtirb = ref ""
 let rely = ref "true"
 let guar = ref "true"
-
 let concurrency = ref "easy"
 
 let speclist =
@@ -22,7 +21,9 @@ let speclist =
       Arg.Set_string guar,
       "the guarantee(s) this component must uphold" );
     ("--verbose", Arg.Set verb, "verbose-mode output");
-    ("--concurrency", Arg.Set_string concurrency, "concurrency mode (safe / easy)");
+    ( "--concurrency",
+      Arg.Set_string concurrency,
+      "concurrency mode (safe / easy)" );
   ]
 
 let usage = Printf.sprintf "Usage: %s [options] input.gtirb\n" Sys.argv.(0)
@@ -41,17 +42,22 @@ let () =
     output_string stderr usage;
     exit 1);
 
-  let mode = if String.equal !concurrency "safe" then
-    Solver.Safe else
-    Solver.Easy in
+  let mode =
+    if String.equal !concurrency "safe" then Solver.Safe else Solver.Easy
+  in
 
   (match mode with
-  | Solver.Easy -> print_endline
-      ("[!] Executing in easy-concurrency mode. This mode makes strong " ^
-      "assumptions about memory that isn't covered by the specification. Be careful!\n")
-  | Solver.Safe -> print_endline
-      ("[!] Executing in safe-concurrency mode. This mode makes no assumptions " ^
-      "about unspecified memory; you will have to write much larger specifications.\n"));
+  | Solver.Easy ->
+      print_endline
+        ("[!] Executing in easy-concurrency mode. This mode makes strong "
+       ^ "assumptions about memory that isn't covered by the specification. Be \
+          careful!\n")
+  | Solver.Safe ->
+      print_endline
+        ("[!] Executing in safe-concurrency mode. This mode makes no \
+          assumptions "
+       ^ "about unspecified memory; you will have to write much larger \
+          specifications.\n"));
 
   let ir = read_gtirb !input_gtirb in
   let (lifter_result : Lifter.blockdata Lifter.Blocks.t) =
@@ -91,7 +97,9 @@ let () =
       pair_result
   in
 
-  let failed = Solver.solve_all ~verb:!verb ~mode:mode reorderable_pairs specification in
+  let failed =
+    Solver.solve_all ~verb:!verb ~mode reorderable_pairs specification
+  in
 
   if List.length failed != 0 then
     print_endline

@@ -9,9 +9,7 @@ module type SpecLang = sig
     | Post of string * string
     | Nondeterminism
 
-  module M : Map.S with type key = string
-
-  type spec = spec_body M.t
+  type spec = (string * spec_body) list
 end
 
 module SpecLang : SpecLang = struct
@@ -23,7 +21,5 @@ module SpecLang : SpecLang = struct
     | Post of string * string
     | Nondeterminism
 
-  module M = Map.Make (String)
-
-  type spec = spec_body M.t
+  type spec = (string * spec_body) list
 end

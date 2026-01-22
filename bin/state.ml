@@ -3,12 +3,7 @@ open Cvc5
 module State = struct
   module M = Map.Make (String)
 
-  type t =
-    {
-      map : Term.term M.t;
-      solver : Solver.solver;
-      sort : Sort.sort;
-    }
+  type t = { map : Term.term M.t; solver : Solver.solver; sort : Sort.sort }
 
   (*
   let apply (state : t) (f : Func.t) : t =
@@ -28,16 +23,14 @@ end
 module MultiFunc = struct
   module M = Map.Make (String)
 
-  type single =
-    {
-      nondet : bool;
-      func : Term.term -> Term.term;
-    }
-
+  type single = { nondet : bool; func : Term.term -> Term.term }
   type t = single M.t
 
   let id = ref 0
-  let fresh = incr id; string_of_int !id
+
+  let fresh =
+    incr id;
+    string_of_int !id
 
   let nondet_for (mf : t) s = (M.find s mf).nondet
   let apply_for (mf : t) s = (M.find s mf).func
@@ -49,6 +42,7 @@ module MultiFunc = struct
     let apply_for (mf : t) s =
       let single = M.find s mf in
       if single.nondet then ();
-      (M.find s mf).func in
+      (M.find s mf).func
+    in
     ()
 end

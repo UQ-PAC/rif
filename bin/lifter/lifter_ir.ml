@@ -2,7 +2,6 @@ open LibASL
 
 module type LifterIR = sig
   type var = Register of int | PC | SP | PSTATE
-
   type edgetype = Linear | Branch | Entry
   type edge = string * edgetype
   type edges = edge list
@@ -15,6 +14,7 @@ module type LifterIR = sig
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
   }
+
   module I : Map.S with type key = int
 
   type block = {
@@ -23,6 +23,7 @@ module type LifterIR = sig
     edges : edges;
     instructions : instruction I.t;
   }
+
   module B : Map.S with type key = string
 
   type blocks = block B.t
@@ -49,7 +50,8 @@ module LifterIR : LifterIR = struct
     | "PC" -> PC
     | "SP" -> SP
     | "PSTATE" -> PSTATE
-    | s when s.[0] = 'R' -> Register ((String.sub s 1 (String.length s)) |> int_of_string)
+    | s when s.[0] = 'R' ->
+        Register (String.sub s 1 (String.length s) |> int_of_string)
     | _ -> failwith "Invalid string"
 
   let var_eq a b = String.equal (string_of_var a) (string_of_var b)
@@ -64,8 +66,8 @@ module LifterIR : LifterIR = struct
   }
 
   let instruction_syms i =
-    (List.map (fun v -> string_of_var v |> (^) "M") (i.load @ i.store)) @
-    (List.map string_of_var (i.read @ i.write))
+    List.map (fun v -> string_of_var v |> ( ^ ) "M") (i.load @ i.store)
+    @ List.map string_of_var (i.read @ i.write)
 
   type edgetype = Linear | Branch | Entry
   type edge = string * edgetype

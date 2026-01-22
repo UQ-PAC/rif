@@ -10,6 +10,7 @@ module type LifterElf = sig
   }
 
   module B : Map.S with type key = string
+
   type blocks = extracted_block B.t
 
   val parse : string -> string -> bool -> blocks option
@@ -48,7 +49,6 @@ module LifterElf : LifterElf = struct
           (Printf.sprintf "Bad IR: could not reply request: %s"
              (Ocaml_protoc_plugin.Result.show_error e))
 
-
   let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
 
   module GtirbLookups = struct
@@ -72,16 +72,15 @@ module LifterElf : LifterElf = struct
       in
       symbol_by_name syms name |> expect_referent_uuid
 
-    let uuid_to_block (uuid : bytes) (blocks : p_block list) :
-        (int * p_code) =
+    let uuid_to_block (uuid : bytes) (blocks : p_block list) : int * p_code =
       let matches (b : p_block) =
         match b.value with
         | `Code (c : p_code) when Bytes.equal c.uuid uuid -> Some (b.offset, c)
         | _ -> None
       in
       List.find_map matches blocks |> function
-        | Some r -> r
-        | None -> failwith "Bad input: could not find codeblock for uuid"
+      | Some r -> r
+      | None -> failwith "Bad input: could not find codeblock for uuid"
 
     let interval_codeblock_uuids (i : p_interval) =
       List.filter_map
@@ -90,24 +89,29 @@ module LifterElf : LifterElf = struct
         i.blocks
   end
 
- type extracted_block = {
+  type extracted_block = {
     name : string;
     address : int;
     edges : LifterIR.edges;
     instructions : (int * bytes) list;
   }
+
   module B = Map.Make (String)
+
   type blocks = extracted_block B.t
 
   module CFG = struct
     open CFG.Gtirb.Proto
+
     type p_edge = Edge.t
     type p_edgelabel = EdgeLabel.t
     type p_edgetype = EdgeType.t
 
     module G = Map.Make (String)
+
     module S = Set.Make (struct
       type t = LifterIR.edge
+
       let compare = compare
     end)
 
@@ -115,36 +119,41 @@ module LifterElf : LifterElf = struct
 
     let induce_graph (g : p_cfg) : t =
       let add k v acc =
-        let sv = match G.find_opt k acc with
-        | Some s -> S.add v s
-        | None -> S.singleton v in
+        let sv =
+          match G.find_opt k acc with
+          | Some s -> S.add v s
+          | None -> S.singleton v
+        in
         G.add k sv acc
       in
 
-      List.fold_left (fun acc (e : p_edge) ->
-        let k = b64_bytes e.source_uuid in
-        let v = b64_bytes e.target_uuid in
-        match e.label with
-        | Some t -> (
-          match t.type' with
-          | EdgeType.Type_Fallthrough -> add k (v, LifterIR.Linear) acc
-          | EdgeType.Type_Branch -> add k (v, LifterIR.Branch) acc
-          | _ -> acc
-        )
-        | None -> acc
-      ) G.empty g.edges
+      List.fold_left
+        (fun acc (e : p_edge) ->
+          let k = b64_bytes e.source_uuid in
+          let v = b64_bytes e.target_uuid in
+          match e.label with
+          | Some t -> (
+              match t.type' with
+              | EdgeType.Type_Fallthrough -> add k (v, LifterIR.Linear) acc
+              | EdgeType.Type_Branch -> add k (v, LifterIR.Branch) acc
+              | _ -> acc)
+          | None -> acc)
+        G.empty g.edges
 
     let filter (is : string list) (g : t) : t =
       (* filter the sets for edges inside the interval *)
-      G.map (fun v ->
-        S.filter_map (fun edge ->
-          List.find_opt (String.equal @@ fst edge) is |> Option.map (fun _ -> edge)
-        ) v
-      ) g
+      G.map
+        (fun v ->
+          S.filter_map
+            (fun edge ->
+              List.find_opt (String.equal @@ fst edge) is
+              |> Option.map (fun _ -> edge))
+            v)
+        g
       (* filter the map for non-empty sets and values inside the interval *)
-      |>
-      G.filter (fun k v ->
-        List.find_opt ((==) k) is |> Option.is_some && not @@ S.is_empty v)
+      |> G.filter (fun k v ->
+             List.find_opt (( == ) k) is |> Option.is_some
+             && (not @@ S.is_empty v))
 
     let edges k map =
       let set = G.find k map in
@@ -188,34 +197,43 @@ module LifterElf : LifterElf = struct
            (b64_bytes component_block_uuid));
 
     let do_interval ~(do_reverse : bool) (i : p_interval) : blocks option =
-      try Some (
-        (* Cause Not_found and return None if we aren't in the right interval yet *)
-        ignore @@ GtirbLookups.uuid_to_block component_block_uuid i.blocks;
+      try
+        Some
+          ((* Cause Not_found and return None if we aren't in the right interval yet *)
+           ignore @@ GtirbLookups.uuid_to_block component_block_uuid i.blocks;
 
-        let uuids = GtirbLookups.interval_codeblock_uuids i in
-        let component_cfg = CFG.filter (List.map b64_bytes uuids) cfg in
+           let uuids = GtirbLookups.interval_codeblock_uuids i in
+           let component_cfg = CFG.filter (List.map b64_bytes uuids) cfg in
 
-        List.fold_left (fun acc uuid ->
-          let offset, cblock = GtirbLookups.uuid_to_block uuid i.blocks in
-          let name = b64_bytes uuid in
+           List.fold_left
+             (fun acc uuid ->
+               let offset, cblock = GtirbLookups.uuid_to_block uuid i.blocks in
+               let name = b64_bytes uuid in
 
-          let block : extracted_block = {
-            name = name;
-            address = offset + i.address;
-            edges = CFG.edges name component_cfg;
-            instructions = split_instructions ~do_reverse:do_reverse i.address offset cblock.size i.contents
-          } in
+               let block : extracted_block =
+                 {
+                   name;
+                   address = offset + i.address;
+                   edges = CFG.edges name component_cfg;
+                   instructions =
+                     split_instructions ~do_reverse i.address offset cblock.size
+                       i.contents;
+                 }
+               in
 
-          B.add name block acc
-        ) B.empty uuids
-      ) with Not_found -> None
+               B.add name block acc)
+             B.empty uuids)
+      with Not_found -> None
     in
 
-    List.find_map (fun (m : p_module) ->
-      List.find_map (fun (s : p_section) ->
-        List.find_map (fun (i : p_interval) ->
-          do_interval ~do_reverse:(m.byte_order == LittleEndian) i
-        ) s.byte_intervals
-      ) m.sections
-    ) modules
+    List.find_map
+      (fun (m : p_module) ->
+        List.find_map
+          (fun (s : p_section) ->
+            List.find_map
+              (fun (i : p_interval) ->
+                do_interval ~do_reverse:(m.byte_order == LittleEndian) i)
+              s.byte_intervals)
+          m.sections)
+      modules
 end

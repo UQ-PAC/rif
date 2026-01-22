@@ -1,5 +1,4 @@
 open Rif
-
 open Lifter_ir
 open Lifter_elf
 open Lifter_disassembly
@@ -21,7 +20,5 @@ module Lifter : Lifter = struct
   let parse (filename : string) (component : string) (verb : bool) =
     print_endline "[!] Parsing GTIRB IR...";
 
-    Elf.parse filename component verb |>
-    Option.get |>
-    Disasm.lift_all
+    Elf.parse filename component verb |> Option.get |> Disasm.lift_all
 end

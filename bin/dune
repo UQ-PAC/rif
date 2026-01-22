@@ -1,16 +1,5 @@
 (executable
  (public_name rif)
  (name main)
- (libraries
-  rif
-  datalog
-  datalog.caml_interface
-
-  lifter
-  solver
-  spec)
- (modules
-   main
-   datalog
- )
-)
+ (libraries rif datalog datalog.caml_interface lifter solver spec)
+ (modules main datalog))
