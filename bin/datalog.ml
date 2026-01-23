@@ -4,10 +4,12 @@ open Lifter
 (*
   Wrapper around the datalog engine
 *)
-module Datalog : sig
+module type Datalog = sig
   val compute_reorderable_pairs :
     Lifter.IR.blocks -> bool -> ((string * int) * (string * int)) list
-end = struct
+end
+
+module Datalog : Datalog = struct
   type db = DL.Logic.DB.t
 
   let load () =

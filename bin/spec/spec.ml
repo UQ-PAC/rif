@@ -11,9 +11,7 @@ module type Spec = sig
     val topo_iter : (string -> Lang.spec_body -> unit) -> Lang.spec -> unit
   end
 
-  module Parse : sig
-    val parse : string -> Lang.spec
-  end
+  module Parse : SpecParse
 
   val input : string -> string -> Lang.spec * Lang.spec
 end
