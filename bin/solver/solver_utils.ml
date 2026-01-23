@@ -42,17 +42,17 @@ module SolverUtils = struct
 
   let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])
 
-  let trivial_sygus tm solver sort =
+  let trivial_sygus tm srt slv =
     let zero = Term.mk_int tm 0 in
 
-    let dummy_in = Term.mk_var_s tm sort "dummy_in" in
+    let dummy_in = Term.mk_var_s tm srt "dummy_in" in
     let s =
-      Cvc5.Solver.synth_fun solver tm "dummy"
+      Cvc5.Solver.synth_fun slv tm "dummy"
         (Array.of_list [ dummy_in ])
-        sort None
+        srt None
     in
     let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
-    Cvc5.Solver.add_sygus_constraint solver (term_eq tm uf zero)
+    Cvc5.Solver.add_sygus_constraint slv (term_eq tm uf zero)
 
   type errnode =
     | Slice of Asl_ast.slice
@@ -87,4 +87,14 @@ module SolverUtils = struct
     | Fun n ->
         failwith
           (Printf.sprintf "Internal: encountered unexpected function %s" n)
+
+  let mk_solver tm =
+    let solver = Cvc5.Solver.mk_solver ~logic:"ALL" tm in
+    Cvc5.Solver.set_option solver "sygus" "true";
+    Cvc5.Solver.set_option solver "full-sygus-verify" "true";
+    Cvc5.Solver.set_option solver "sygus-enum" "smart";
+    Cvc5.Solver.set_option solver "sygus-si" "all";
+    Cvc5.Solver.set_option solver "incremental" "true";
+
+    solver
 end

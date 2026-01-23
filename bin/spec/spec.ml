@@ -3,16 +3,25 @@ open Spec_lang
 open Spec_parse
 
 module type Spec = sig
-  module Analysis : SpecAnalysis
   module Lang : SpecLang
-  module Parse : SpecParse
+
+  module Analysis : sig
+    val sanity : Lang.spec -> unit
+    val spec_syms : Lang.spec * Lang.spec -> string list
+    val topo_iter :
+      (string -> Lang.spec_body -> unit) -> Lang.spec -> unit
+  end
+
+  module Parse : sig
+    val parse : string -> Lang.spec
+  end
 
   val input : string -> string -> Lang.spec * Lang.spec
 end
 
 module Spec : Spec = struct
-  module Analysis = SpecAnalysis
   module Lang = SpecLang
+  module Analysis = SpecAnalysis
   module Parse = SpecParse
 
   let input (r : string) (g : string) : Lang.spec * Lang.spec =

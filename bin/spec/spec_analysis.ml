@@ -4,6 +4,8 @@ module type SpecAnalysis = sig
   (* Sanity-check a parsed spec for loops *)
   val sanity : SpecLang.spec -> unit
 
+  val spec_syms : (SpecLang.spec * SpecLang.spec) -> string list
+
   (* Iterate, or map, through a spec, in topological order
      i.e. if R_MR0() calls R_MR2() then we will see R_MR0() before R_MR2() *)
   val topo_iter :
@@ -12,6 +14,7 @@ end
 
 module SpecAnalysis : SpecAnalysis = struct
   open Graph
+  module Lang = SpecLang
 
   module Node = struct
     type t = string
@@ -44,6 +47,12 @@ module SpecAnalysis : SpecAnalysis = struct
     | SpecLang.Term (_, ss) ->
         List.fold_left (fun a b -> a || has_nondeterminism b) false ss
     | _ -> false
+
+  let spec_syms spec =
+    let sum_spec = fst spec @ snd spec in
+    List.map (fun (s,b) -> s :: global_variables b) sum_spec |>
+    List.flatten |>
+    List.sort_uniq String.compare
 
   let nodes spec = List.map fst spec |> List.fold_left G.add_vertex G.empty
 
