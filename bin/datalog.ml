@@ -1,15 +1,14 @@
 module DL = Datalog_caml_interface
 open Lifter
-open Util
 
 (*
   Wrapper around the datalog engine
 *)
 module Datalog : sig
   val compute_reorderable_pairs :
-    Lifter.blockdata Lifter.Blocks.t ->
+    Lifter.IR.blocks ->
     bool ->
-    ((bytes * int) * (bytes * int)) list
+    ((string * int) * (string * int)) list
 end = struct
   type db = DL.Logic.DB.t
 
@@ -96,8 +95,8 @@ end = struct
     let query_reorderable (db : db) = query_rel2 db reorderable
   end
 
-  let hasCtrl (i : Lifter.instruction) =
-    Option.is_some (List.find_opt (Lifter.varEq Lifter.PC) i.write)
+  let hasCtrl (i : Lifter.IR.instruction) =
+    Option.is_some (List.find_opt (Lifter.IR.var_eq Lifter.IR.PC) i.write)
 
   let _memop_explain (db : db) =
     let memop = Helpers.get_rel1 ~k:DL.Univ.int "memOp" in
@@ -128,18 +127,18 @@ end = struct
         List.iter (fun x -> print_endline (DL.Logic.T.to_string x)) why_ppo)
       (Helpers.query_rel2 db linear)
 
-  let compute_reorderable_pairs (blocks : Lifter.blockdata Lifter.Blocks.t)
+  let compute_reorderable_pairs (blocks : Lifter.IR.blocks)
       (verb : bool) =
     let db = load () in
 
-    let base_facts_for_block (name : string) (block : Lifter.blockdata) : unit =
+    let base_facts_for_block (name : string) (block : Lifter.IR.block) : unit =
       (* This block's position relative to other blocks *)
       List.iter
-        (fun (n, _) -> Helpers.add_block_order db name (b64_bytes n))
-        block.outgoing_edges;
+        (fun (n, _) -> Helpers.add_block_order db name n)
+        block.edges;
 
-      let gen_facts_over_instructions (i1 : int * Lifter.instruction)
-          (i2 : int * Lifter.instruction) =
+      let gen_facts_over_instructions (i1 : int * Lifter.IR.instruction)
+          (i2 : int * Lifter.IR.instruction) =
         (* instructions have order relative to each other *)
         Helpers.add_instruction_order db (fst i1) (fst i2);
         (* instructions have membership in a block *)
@@ -147,16 +146,16 @@ end = struct
 
         (* Individual instruction facts for i1; i2 happens in the next "fold" *)
         List.iter
-          (fun var -> Helpers.add_source_reg db (fst i1) (Lifter.varSym var))
+          (fun var -> Helpers.add_source_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).read;
         List.iter
-          (fun var -> Helpers.add_dest_reg db (fst i1) (Lifter.varSym var))
+          (fun var -> Helpers.add_dest_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).write;
         List.iter
-          (fun var -> Helpers.add_load_reg db (fst i1) (Lifter.varSym var))
+          (fun var -> Helpers.add_load_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).load;
         List.iter
-          (fun var -> Helpers.add_store_reg db (fst i1) (Lifter.varSym var))
+          (fun var -> Helpers.add_store_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).store;
         if (snd i1).fence then Helpers.add_fence_inst db (fst i1);
         if hasCtrl (snd i1) then Helpers.add_control_inst db (fst i1);
@@ -164,13 +163,13 @@ end = struct
         i2
       in
 
-      let instructions = Lifter.Instructions.bindings block.instructions in
+      let instructions = Lifter.IR.I.bindings block.instructions in
       ignore
       @@ List.fold_left gen_facts_over_instructions (List.hd instructions)
            (List.tl instructions)
     in
 
-    Lifter.Blocks.iter (fun k v -> base_facts_for_block (b64_bytes k) v) blocks;
+    Lifter.IR.B.iter (fun k v -> base_facts_for_block k v) blocks;
 
     if verb then
       print_endline
@@ -188,6 +187,6 @@ end = struct
 
     List.map
       (fun (i1, i2) ->
-        ((bytes_b64 @@ find_block i1, i1), (bytes_b64 @@ find_block i2, i2)))
+        ((find_block i1, i1), (find_block i2, i2)))
       reord
 end

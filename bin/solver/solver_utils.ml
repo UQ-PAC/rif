@@ -1,6 +1,10 @@
 open Cvc5
 open LibASL
 
+module type SolverUtils = sig
+  type mode = Easy | Safe
+end
+
 module SolverUtils = struct
   type mode = Easy | Safe
 

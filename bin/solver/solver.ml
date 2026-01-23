@@ -8,12 +8,16 @@ open Solver_instruction
 open Solver_spec
 
 module type Solver = sig
-  val solve_all : (Spec.Lang.spec * Spec.Lang.spec) ->
+  module Utils : SolverUtils
+
+  val solve_all : verb:bool -> mode:Utils.mode -> (Spec.Lang.spec * Spec.Lang.spec) ->
     (Lifter.IR.instruction * Lifter.IR.instruction) list ->
     (Lifter.IR.instruction * Lifter.IR.instruction) list
 end
 
 module Solver : Solver = struct
+  module Utils = SolverUtils
+
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
 
@@ -71,7 +75,7 @@ module Solver : Solver = struct
 
     solve_in_order tm srt pair spec
 
-  let solve_all (spec : sp) (pairs : ip list) : ip list =
+  let solve_all ~verb ~mode (spec : sp) (pairs : ip list) : ip list =
     let tm = TermManager.mk_tm () in
     let srt = Sort.mk_int_sort tm in
 
