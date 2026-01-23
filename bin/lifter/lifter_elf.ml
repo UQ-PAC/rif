@@ -203,7 +203,9 @@ module LifterElf : LifterElf = struct
            ignore @@ GtirbLookups.uuid_to_block component_block_uuid i.blocks;
 
            let uuids = GtirbLookups.interval_codeblock_uuids i in
-           let component_cfg = CFG.filter (List.map b64_bytes uuids) cfg in
+           let component_cfg =
+             (* CFG.filter (List.map b64_bytes uuids) *) cfg
+           in
 
            List.fold_left
              (fun acc uuid ->
@@ -223,7 +225,7 @@ module LifterElf : LifterElf = struct
 
                B.add name block acc)
              B.empty uuids)
-      with Not_found -> None
+      with Failure _ -> None
     in
 
     List.find_map

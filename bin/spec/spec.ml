@@ -8,8 +8,7 @@ module type Spec = sig
   module Analysis : sig
     val sanity : Lang.spec -> unit
     val spec_syms : Lang.spec * Lang.spec -> string list
-    val topo_iter :
-      (string -> Lang.spec_body -> unit) -> Lang.spec -> unit
+    val topo_iter : (string -> Lang.spec_body -> unit) -> Lang.spec -> unit
   end
 
   module Parse : sig
@@ -27,6 +26,8 @@ module Spec : Spec = struct
   let input (r : string) (g : string) : Lang.spec * Lang.spec =
     let rely = SpecParse.parse r in
     let guar = SpecParse.parse g in
+
+    print_endline "AAA";
 
     Analysis.sanity rely;
     Analysis.sanity guar;

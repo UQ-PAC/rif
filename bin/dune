@@ -1,5 +1,6 @@
 (executable
  (public_name rif)
  (name main)
+ (flags -w -27)
  (libraries rif datalog datalog.caml_interface lifter solver spec)
  (modules main datalog))

@@ -1,5 +1,4 @@
 open Cvc5
-
 open Solver_utils
 
 module type SolverState = sig
@@ -17,6 +16,7 @@ module type SolverState = sig
     state_function ->
     state ->
     state
+
   val assert' :
     TermManager.tm ->
     Cvc5.Solver.solver ->
@@ -71,14 +71,17 @@ module SolverState : SolverState = struct
 
   let assert' tm slv srt (func : state_function) (state : state) =
     let results =
-      S.mapi (fun k _ ->
-        match func state k with
-        | None -> fresh_nondeterminism slv srt
-        | Some value -> value
-      ) (snd state)
+      S.mapi
+        (fun k _ ->
+          match func state k with
+          | None -> fresh_nondeterminism slv srt
+          | Some value -> value)
+        (snd state)
     in
-    List.iter (fun (k,v) ->
-      Cvc5.Solver.assert_formula slv (find_opt state k |> Option.get |> SolverUtils.term_eq tm v);
-    ) (S.bindings results);
+    List.iter
+      (fun (k, v) ->
+        Cvc5.Solver.assert_formula slv
+          (find_opt state k |> Option.get |> SolverUtils.term_eq tm v))
+      (S.bindings results);
     state
 end

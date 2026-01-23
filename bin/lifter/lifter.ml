@@ -10,8 +10,12 @@ module type Lifter = sig
   module IR : LifterIR
 
   val parse : string -> string -> bool -> IR.blocks
-  val resolve_ids : IR.blocks -> bool ->
-    ((string * int) * (string * int)) list -> (IR.instruction * IR.instruction) list
+
+  val resolve_ids :
+    IR.blocks ->
+    bool ->
+    ((string * int) * (string * int)) list ->
+    (IR.instruction * IR.instruction) list
 end
 
 module Lifter : Lifter = struct
@@ -22,24 +26,29 @@ module Lifter : Lifter = struct
   let parse (filename : string) (component : string) (verb : bool) =
     print_endline "[!] Parsing GTIRB IR...";
 
-    let result = Elf.parse filename component verb |> Option.get |> Disasm.lift_all in
+    let result =
+      Elf.parse filename component verb |> Option.get |> Disasm.lift_all
+    in
 
     let bcount = IR.B.cardinal result in
-    let icount = IR.B.fold
-      (fun _ (b : IR.block) s ->
-        s + (IR.I.bindings b.instructions |> List.length))
-      result 0 in
+    let icount =
+      IR.B.fold
+        (fun _ (b : IR.block) s ->
+          s + (IR.I.bindings b.instructions |> List.length))
+        result 0
+    in
 
-    print_endline (Printf.sprintf
-       "[!] Extracted %i basic block%s (%i instructions) from '%s()'..." bcount
-       (if bcount == 1 then "" else "s")
-       icount component);
+    print_endline
+      (Printf.sprintf
+         "[!] Extracted %i basic block%s (%i instructions) from '%s()'..."
+         bcount
+         (if bcount == 1 then "" else "s")
+         icount component);
 
     result
 
   let resolve_ids (blocks : IR.blocks) verb =
-    List.map
-      (fun ((i1b, i1i), (i2b, i2i)) ->
+    List.map (fun ((i1b, i1i), (i2b, i2i)) ->
         let b1 = IR.B.find i1b blocks in
         let b2 = IR.B.find i2b blocks in
 
@@ -48,8 +57,5 @@ module Lifter : Lifter = struct
             (Printf.sprintf "    [!] Could reorder %s.%i <-> %s.%i" b1.name i1i
                b2.name i2i);
 
-        ( IR.I.find i1i b1.instructions,
-          IR.I.find i2i b2.instructions ))
-
-
+        (IR.I.find i1i b1.instructions, IR.I.find i2i b2.instructions))
 end

@@ -51,9 +51,7 @@ module SolverUtils = struct
 
     let dummy_in = Term.mk_var_s tm srt "dummy_in" in
     let s =
-      Cvc5.Solver.synth_fun slv tm "dummy"
-        (Array.of_list [ dummy_in ])
-        srt None
+      Cvc5.Solver.synth_fun slv tm "dummy" (Array.of_list [ dummy_in ]) srt None
     in
     let uf = Term.mk_term tm Kind.Apply_uf (Array.of_list [ s; zero ]) in
     Cvc5.Solver.add_sygus_constraint slv (term_eq tm uf zero)

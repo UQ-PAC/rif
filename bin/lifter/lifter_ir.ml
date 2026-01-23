@@ -31,7 +31,7 @@ module type LifterIR = sig
   val string_of_var : var -> string
   val var_of_string : string -> var
   val var_eq : var -> var -> bool
-  val pair_syms : (instruction * instruction) -> string list
+  val pair_syms : instruction * instruction -> string list
 end
 
 module LifterIR : LifterIR = struct

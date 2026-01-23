@@ -6,9 +6,7 @@ open Lifter
 *)
 module Datalog : sig
   val compute_reorderable_pairs :
-    Lifter.IR.blocks ->
-    bool ->
-    ((string * int) * (string * int)) list
+    Lifter.IR.blocks -> bool -> ((string * int) * (string * int)) list
 end = struct
   type db = DL.Logic.DB.t
 
@@ -127,15 +125,12 @@ end = struct
         List.iter (fun x -> print_endline (DL.Logic.T.to_string x)) why_ppo)
       (Helpers.query_rel2 db linear)
 
-  let compute_reorderable_pairs (blocks : Lifter.IR.blocks)
-      (verb : bool) =
+  let compute_reorderable_pairs (blocks : Lifter.IR.blocks) (verb : bool) =
     let db = load () in
 
     let base_facts_for_block (name : string) (block : Lifter.IR.block) : unit =
       (* This block's position relative to other blocks *)
-      List.iter
-        (fun (n, _) -> Helpers.add_block_order db name n)
-        block.edges;
+      List.iter (fun (n, _) -> Helpers.add_block_order db name n) block.edges;
 
       let gen_facts_over_instructions (i1 : int * Lifter.IR.instruction)
           (i2 : int * Lifter.IR.instruction) =
@@ -146,16 +141,20 @@ end = struct
 
         (* Individual instruction facts for i1; i2 happens in the next "fold" *)
         List.iter
-          (fun var -> Helpers.add_source_reg db (fst i1) (Lifter.IR.string_of_var var))
+          (fun var ->
+            Helpers.add_source_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).read;
         List.iter
-          (fun var -> Helpers.add_dest_reg db (fst i1) (Lifter.IR.string_of_var var))
+          (fun var ->
+            Helpers.add_dest_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).write;
         List.iter
-          (fun var -> Helpers.add_load_reg db (fst i1) (Lifter.IR.string_of_var var))
+          (fun var ->
+            Helpers.add_load_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).load;
         List.iter
-          (fun var -> Helpers.add_store_reg db (fst i1) (Lifter.IR.string_of_var var))
+          (fun var ->
+            Helpers.add_store_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).store;
         if (snd i1).fence then Helpers.add_fence_inst db (fst i1);
         if hasCtrl (snd i1) then Helpers.add_control_inst db (fst i1);
@@ -185,8 +184,5 @@ end = struct
       Option.get (Helpers.func_rel2_int db Helpers.instruction_in_block i)
     in
 
-    List.map
-      (fun (i1, i2) ->
-        ((find_block i1, i1), (find_block i2, i2)))
-      reord
+    List.map (fun (i1, i2) -> ((find_block i1, i1), (find_block i2, i2))) reord
 end

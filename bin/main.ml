@@ -43,7 +43,8 @@ let () =
     exit 1);
 
   let mode =
-    if String.equal !concurrency "safe" then Solver.Utils.Safe else Solver.Utils.Easy
+    if String.equal !concurrency "safe" then Solver.Utils.Safe
+    else Solver.Utils.Easy
   in
 
   (match mode with
