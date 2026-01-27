@@ -76,7 +76,9 @@ module SpecParse : SpecParse = struct
   let all_specs = sep_by1 (char ';' <* whitespace) (with_parens spec)
 
   let parse s =
-    parse_string ~consume:All all_specs s |> function
-    | Ok a -> a
-    | Error s -> failwith s
+    if String.equal s "" then []
+    else
+      parse_string ~consume:All all_specs s |> function
+      | Ok a -> a
+      | Error s -> failwith s
 end

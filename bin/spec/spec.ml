@@ -5,6 +5,7 @@ open Spec_parse
 module type Spec = sig
   module Lang : SpecLang
 
+  (* Re-type the Analysis module using the types from the imported Lang *)
   module Analysis : sig
     val sanity : Lang.spec -> unit
     val spec_syms : Lang.spec * Lang.spec -> string list
@@ -24,8 +25,6 @@ module Spec : Spec = struct
   let input (r : string) (g : string) : Lang.spec * Lang.spec =
     let rely = SpecParse.parse r in
     let guar = SpecParse.parse g in
-
-    print_endline "AAA";
 
     Analysis.sanity rely;
     Analysis.sanity guar;

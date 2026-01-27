@@ -27,7 +27,7 @@ module Lifter : Lifter = struct
     print_endline "[!] Parsing GTIRB IR...";
 
     let result =
-      Elf.parse filename component verb |> Option.get |> Disasm.lift_all
+      Elf.parse filename component verb |> Option.get |> Disasm.lift_all verb
     in
 
     let bcount = IR.B.cardinal result in

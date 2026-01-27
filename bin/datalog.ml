@@ -129,6 +129,7 @@ module Datalog : Datalog = struct
 
   let compute_reorderable_pairs (blocks : Lifter.IR.blocks) (verb : bool) =
     let db = load () in
+    _linear_explain db;
 
     let base_facts_for_block (name : string) (block : Lifter.IR.block) : unit =
       (* This block's position relative to other blocks *)
@@ -169,6 +170,8 @@ module Datalog : Datalog = struct
       @@ List.fold_left gen_facts_over_instructions (List.hd instructions)
            (List.tl instructions)
     in
+
+    _linear_explain db;
 
     Lifter.IR.B.iter (fun k v -> base_facts_for_block k v) blocks;
 

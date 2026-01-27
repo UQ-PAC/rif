@@ -17,10 +17,11 @@ module type SolverState = sig
     state ->
     state
 
-  val assert' :
+  val assert_over :
     TermManager.tm ->
     Cvc5.Solver.solver ->
     Sort.sort ->
+    state_function ->
     state_function ->
     state ->
     state
@@ -69,19 +70,16 @@ module SolverState : SolverState = struct
     in
     (fst state, map)
 
-  let assert' tm slv srt (func : state_function) (state : state) =
-    let results =
-      S.mapi
-        (fun k _ ->
-          match func state k with
-          | None -> fresh_nondeterminism slv srt
-          | Some value -> value)
-        (snd state)
-    in
+  let assert_over tm slv srt (pred : state_function) (func : state_function)
+      (state : state) =
+    let results = apply slv srt func state |> snd in
+    let expected = apply slv srt pred state |> snd |> S.bindings in
+
     List.iter
       (fun (k, v) ->
-        Cvc5.Solver.assert_formula slv
-          (find_opt state k |> Option.get |> SolverUtils.term_eq tm v))
-      (S.bindings results);
-    state
+        S.find_opt k results |> Option.get |> SolverUtils.term_eq tm v
+        |> Cvc5.Solver.assert_formula slv)
+      expected;
+
+    (fst state, results)
 end

@@ -136,61 +136,52 @@ module LifterDisassembly = struct
       method! vlexpr _ = DoChildren
     end
 
-  let lift _pc op =
-    let env = Arm_env.aarch64_evaluation_environment () |> Option.get in
-    Dis.retrieveDisassembly env (Dis.build_env env) op
-
-  (* 
-    class cleanup =
-      object (_this)
-        inherit Asl_visitor.nopAslVisitor
-
-        method! vexpr e =
-          match e with
-          | Expr_TApply (FIdent ("Mem.set", _), _, addr :: _values) ->
-              ChangeTo addr
-          | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _values) ->
-              ChangeTo addr
-          | _ -> DoChildren
-      end
-  *)
+  (* Make env separately, we don't need to re-make it every time *)
+  let env = Arm_env.aarch64_evaluation_environment () |> Option.get
+  let lift _pc op = Dis.retrieveDisassembly env (Dis.build_env env) op
 
   let collapse (ss : Asl_ast.stmt list) : LifterIR.instruction =
     let c = new collector in
     ignore (Asl_visitor.visit_stmts c ss);
     { (c#get) with semantics = ss }
 
-  let lift_one_op ((address, op) : int * bytes) : Asl_ast.stmt list =
+  let lift_one_op (verb : bool) ((address, op) : int * bytes) :
+      Asl_ast.stmt list =
     let opcode = Printf.sprintf "0x%08lx" (Bytes.get_int32_be op 0) in
-    (* Ignore unsupported opcodes *)
+
+    (* Don't die on unsupported opcodes *)
     match lift address opcode with
     | result -> result
     | exception _ ->
-        print_endline "error";
+        if verb then print_endline ("[?] Unsupported opcode detected: " ^ opcode);
         []
 
-  let lift_and_summarise addr op = lift_one_op (addr, op) |> collapse
+  let lift_and_summarise verb addr op = lift_one_op verb (addr, op) |> collapse
 
-  let lift_all map =
-    LifterElf.B.bindings map
-    |> List.fold_left
-         (fun acc (k, v) ->
-           let do_instructions (is : (int * bytes) list) :
-               LifterIR.instruction LifterIR.I.t =
-             List.fold_left
-               (fun acc (k, v) -> LifterIR.I.add k (lift_and_summarise k v) acc)
-               LifterIR.I.empty is
-           in
+  let lift_all verb map =
+    let a =
+      LifterElf.B.bindings map
+      |> List.fold_left
+           (fun acc (k, v) ->
+             let do_instructions (is : (int * bytes) list) :
+                 LifterIR.instruction LifterIR.I.t =
+               List.fold_left
+                 (fun acc (k, v) ->
+                   LifterIR.I.add k (lift_and_summarise verb k v) acc)
+                 LifterIR.I.empty is
+             in
 
-           let do_block (b : LifterElf.extracted_block) : LifterIR.block =
-             {
-               name = b.name;
-               offset = b.address;
-               edges = b.edges;
-               instructions = do_instructions b.instructions;
-             }
-           in
+             let do_block (b : LifterElf.extracted_block) : LifterIR.block =
+               {
+                 name = b.name;
+                 offset = b.address;
+                 edges = b.edges;
+                 instructions = do_instructions b.instructions;
+               }
+             in
 
-           LifterIR.B.add k (do_block v) acc)
-         LifterIR.B.empty
+             LifterIR.B.add k (do_block v) acc)
+           LifterIR.B.empty
+    in
+    a
 end

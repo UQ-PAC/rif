@@ -29,13 +29,14 @@ module Solver : Solver = struct
     let rely =
       SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
     in
-    let guar = SolverSpec.translate tm g |> SolverState.assert' tm slv srt in
-    let i1 = SolverInst.translate tm i1 |> SolverState.apply slv srt in
-    let i2 = SolverInst.translate tm i2 |> SolverState.apply slv srt in
+    let guar =
+      SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
+    in
+    let i1 = SolverInst.translate tm i1 in
+    let i2 = SolverInst.translate tm i2 in
 
     ignore
-      (SolverState.initialise slv srt []
-      |> rely |> i1 |> guar |> rely |> i2 |> guar);
+      (SolverState.initialise slv srt [] |> rely |> guar i1 |> rely |> guar i2);
 
     SolverUtils.trivial_sygus tm srt slv;
     let result = Solver.check_synth slv in
@@ -47,14 +48,16 @@ module Solver : Solver = struct
     let rely =
       SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
     in
-    let guar = SolverSpec.translate tm g |> SolverState.assert' tm slv srt in
-    let i1 = SolverInst.translate tm i1 |> SolverState.apply slv srt in
-    let i2 = SolverInst.translate tm i2 |> SolverState.apply slv srt in
+    let guar =
+      SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
+    in
+    let i1 = SolverInst.translate tm i1 in
+    let i2 = SolverInst.translate tm i2 in
 
     let initial_state = SolverState.initialise slv srt [] in
 
     let final_state =
-      rely initial_state |> i2 |> guar |> rely |> i1 |> guar |> rely
+      rely initial_state |> guar i2 |> rely |> guar i1 |> rely
     in
 
     ignore (final_state, g);

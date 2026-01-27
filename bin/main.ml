@@ -7,8 +7,8 @@ open Spec
 let component = ref "main"
 let verb = ref false
 let input_gtirb = ref ""
-let rely = ref "true"
-let guar = ref "true"
+let rely = ref ""
+let guar = ref ""
 let concurrency = ref "easy"
 
 let speclist =

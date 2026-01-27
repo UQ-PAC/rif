@@ -50,6 +50,7 @@ module LifterElf : LifterElf = struct
              (Ocaml_protoc_plugin.Result.show_error e))
 
   let b64_bytes b = Base64.encode_exn (Bytes.to_string b)
+  let bytes_b64 b = Bytes.of_string (Base64.decode_exn b)
 
   module GtirbLookups = struct
     let symbol_to_uuid (syms : p_symbol list) (name : string) : bytes =
@@ -102,62 +103,87 @@ module LifterElf : LifterElf = struct
 
   module CFG = struct
     open CFG.Gtirb.Proto
+    open Graph
 
     type p_edge = Edge.t
     type p_edgelabel = EdgeLabel.t
     type p_edgetype = EdgeType.t
 
-    module G = Map.Make (String)
+    module Block = struct
+      type t = string
 
-    module S = Set.Make (struct
-      type t = LifterIR.edge
+      let compare = String.compare
+      let equal = String.equal
+      let hash = Hashtbl.hash
+    end
+
+    module Edge = struct
+      type t = LifterIR.edgetype
 
       let compare = compare
-    end)
+      let equal a b = 0 == compare a b
+      let default = LifterIR.Entry
+    end
 
-    type t = S.t G.t
+    module G = Persistent.Digraph.ConcreteLabeled (Block) (Edge)
 
-    let induce_graph (g : p_cfg) : t =
-      let add k v acc =
-        let sv =
-          match G.find_opt k acc with
-          | Some s -> S.add v s
-          | None -> S.singleton v
-        in
-        G.add k sv acc
+    module F =
+      Fixpoint.Make
+        (G)
+        (struct
+          type vertex = G.E.vertex
+          type edge = G.E.t
+          type g = G.t
+          type data = bool
+
+          let direction = Fixpoint.Forward
+          let equal = ( = )
+          let join = ( || )
+          let analyze _ a = a
+        end)
+
+    let induce_graph (g : p_cfg) : G.t =
+      let nodes = List.map b64_bytes g.vertices in
+      let edges =
+        List.filter_map
+          (fun (e : p_edge) ->
+            Option.bind e.label
+              (let src = b64_bytes e.source_uuid in
+               let dst = b64_bytes e.target_uuid in
+               fun (l : p_edgelabel) ->
+                 match l.type' with
+                 | EdgeType.Type_Fallthrough -> Some (src, dst, LifterIR.Linear)
+                 | EdgeType.Type_Branch -> Some (src, dst, LifterIR.Branch)
+                 | _ -> None))
+          g.edges
       in
 
-      List.fold_left
-        (fun acc (e : p_edge) ->
-          let k = b64_bytes e.source_uuid in
-          let v = b64_bytes e.target_uuid in
-          match e.label with
-          | Some t -> (
-              match t.type' with
-              | EdgeType.Type_Fallthrough -> add k (v, LifterIR.Linear) acc
-              | EdgeType.Type_Branch -> add k (v, LifterIR.Branch) acc
-              | _ -> acc)
-          | None -> acc)
-        G.empty g.edges
+      let graph = List.fold_left G.add_vertex G.empty nodes in
 
-    let filter (is : string list) (g : t) : t =
-      (* filter the sets for edges inside the interval *)
-      G.map
-        (fun v ->
-          S.filter_map
-            (fun edge ->
-              List.find_opt (String.equal @@ fst edge) is
-              |> Option.map (fun _ -> edge))
-            v)
-        g
-      (* filter the map for non-empty sets and values inside the interval *)
-      |> G.filter (fun k v ->
-             List.find_opt (( == ) k) is |> Option.is_some
-             && (not @@ S.is_empty v))
+      List.map (fun (s, d, l) -> G.E.create s l d) edges
+      |> List.fold_left G.add_edge_e graph
 
-    let edges k map =
-      let set = G.find k map in
-      S.fold List.cons set []
+    let filter (is : string list) root (g : G.t) : G.t =
+      let blocks_outside_interval =
+        G.fold_vertex List.cons g []
+        |> List.filter (fun b -> not @@ List.exists (( = ) b) is)
+      in
+      let naive_filtered =
+        List.fold_left G.remove_vertex g blocks_outside_interval
+      in
+
+      let reachable = F.analyze (( = ) root) g in
+
+      let non_reachable_blocks =
+        G.fold_vertex List.cons naive_filtered []
+        |> List.filter (fun b -> not @@ reachable b)
+      in
+      List.fold_left G.remove_vertex naive_filtered non_reachable_blocks
+
+    let all_blocks g = G.fold_vertex List.cons g [] |> List.map bytes_b64
+
+    let block_edges from g =
+      List.map (fun e -> (G.E.dst e, G.E.label e)) (G.succ_e g from)
   end
 
   let opcode_length = 4
@@ -204,7 +230,9 @@ module LifterElf : LifterElf = struct
 
            let uuids = GtirbLookups.interval_codeblock_uuids i in
            let component_cfg =
-             (* CFG.filter (List.map b64_bytes uuids) *) cfg
+             CFG.filter (List.map b64_bytes uuids)
+               (b64_bytes component_block_uuid)
+               cfg
            in
 
            List.fold_left
@@ -216,7 +244,7 @@ module LifterElf : LifterElf = struct
                  {
                    name;
                    address = offset + i.address;
-                   edges = CFG.edges name component_cfg;
+                   edges = CFG.block_edges name component_cfg;
                    instructions =
                      split_instructions ~do_reverse i.address offset cblock.size
                        i.contents;
@@ -224,7 +252,8 @@ module LifterElf : LifterElf = struct
                in
 
                B.add name block acc)
-             B.empty uuids)
+             B.empty
+             (CFG.all_blocks component_cfg))
       with Failure _ -> None
     in
 
