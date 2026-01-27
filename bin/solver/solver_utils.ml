@@ -99,4 +99,7 @@ module SolverUtils = struct
     Cvc5.Solver.set_option solver "incremental" "true";
 
     solver
+
+  (* TODO *)
+  let combine (_ : 'a list) (_ : 'b list) : ('a * 'b) list = []
 end

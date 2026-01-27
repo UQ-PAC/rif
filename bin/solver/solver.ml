@@ -23,8 +23,11 @@ module Solver : Solver = struct
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
 
-  let solve_in_order tm srt (i1, i2) (r, g) =
+  let solve_in_order tm srt (i1, i2) (r, g) (als, pre) =
     let slv = SolverUtils.mk_solver tm in
+    let initial =
+      SolverState.initialise slv srt [] |> SolverState.link_aliases als
+    in
 
     let rely =
       SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
@@ -35,15 +38,17 @@ module Solver : Solver = struct
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
 
-    ignore
-      (SolverState.initialise slv srt [] |> rely |> guar i1 |> rely |> guar i2);
+    let _final = initial |> rely |> guar i1 |> rely |> guar i2 in
 
     SolverUtils.trivial_sygus tm srt slv;
     let result = Solver.check_synth slv in
     SynthResult.has_solution result
 
-  let solve_out_order tm srt (i1, i2) (r, g) =
+  let solve_out_order tm srt (i1, i2) (r, g) (als, pre) =
     let slv = SolverUtils.mk_solver tm in
+    let initial =
+      SolverState.initialise slv srt [] |> SolverState.link_aliases als
+    in
 
     let rely =
       SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
@@ -54,23 +59,27 @@ module Solver : Solver = struct
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
 
-    let initial_state = SolverState.initialise slv srt [] in
+    let _final = initial |> rely |> guar i2 |> rely |> guar i1 |> rely in
 
-    let final_state =
-      rely initial_state |> guar i2 |> rely |> guar i1 |> rely
-    in
-
-    ignore (final_state, g);
     true
 
   let solve_pair tm srt (spec : sp) (pair : ip) =
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
 
-    let aliases = [] in
-    let preconditions = [] in
+    let aliases = SolverState.make_aliases inst_vars spec_vars in
+    let preconditions = SolverSpec.generate_pres tm spec in
+    let combinations = SolverUtils.combine aliases preconditions in
 
-    solve_in_order tm srt pair spec
+    let valid_in_order =
+      List.filter (solve_in_order tm srt pair spec) combinations
+    in
+
+    let valid_out_order =
+      List.filter (solve_out_order tm srt pair spec) valid_in_order
+    in
+
+    List.length valid_in_order == List.length valid_out_order
 
   let solve_all ~verb ~mode (spec : sp) (pairs : ip list) : ip list =
     let tm = TermManager.mk_tm () in

@@ -1,6 +1,7 @@
 open Spec_analysis
 open Spec_lang
 open Spec_parse
+open Cvc5
 
 module type Spec = sig
   module Lang : SpecLang

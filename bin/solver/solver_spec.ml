@@ -4,6 +4,9 @@ open Solver_state
 
 module type SolverSpec = sig
   val translate : TermManager.tm -> Spec.Lang.spec -> SolverState.state_function
+
+  val generate_pres :
+    TermManager.tm -> Spec.Lang.spec * Spec.Lang.spec -> Term.term list list
 end
 
 module SolverSpec : SolverSpec = struct
@@ -22,6 +25,10 @@ module SolverSpec : SolverSpec = struct
     | Post (pred, name) -> Some (input_term name)
     | Nondeterminism -> None
 
+  (* TODO *)
   let translate tm (s : Spec.Lang.spec) : SolverState.state_function =
    fun _ _ -> None
+
+  (* TODO *)
+  let generate_pres _ _ = []
 end

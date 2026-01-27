@@ -6,6 +6,7 @@ module type SolverState = sig
   type state_function = state -> string -> Term.term option
 
   val initialise : Cvc5.Solver.solver -> Sort.sort -> string list -> state
+  val make_aliases : string list -> string list -> (string * string) list list
   val link_aliases : (string * string) list -> state -> state
   val find_opt : state -> string -> Term.term option
 
@@ -44,6 +45,9 @@ module SolverState : SolverState = struct
       List.fold_left
         (fun acc n -> S.add n (Cvc5.Solver.declare_sygus_var slv n srt) acc)
         S.empty names )
+
+  (* TODO *)
+  let make_aliases _ _ = []
 
   let link_aliases (pairs : (string * string) list) (state : state) =
     ( List.fold_left (fun acc (n1, n2) -> S.add n1 n2 acc) (fst state) pairs,
