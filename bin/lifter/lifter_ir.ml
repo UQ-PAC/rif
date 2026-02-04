@@ -1,7 +1,7 @@
 open LibASL
 
 module type LifterIR = sig
-  type var = Register of int | PC | SP | PSTATE
+  type var = Register of string | PC | SP | PSTATE
   type edgetype = Linear | Branch | Entry
   type edge = string * edgetype
   type edges = edge list
@@ -38,10 +38,10 @@ module LifterIR : LifterIR = struct
   module I = Map.Make (Int)
   module B = Map.Make (String)
 
-  type var = Register of int | PC | SP | PSTATE
+  type var = Register of string | PC | SP | PSTATE
 
   let string_of_var = function
-    | Register i -> "R" ^ string_of_int i
+    | Register i -> "R" ^ i
     | PC -> "PC"
     | SP -> "SP"
     | PSTATE -> "PSTATE"
@@ -50,8 +50,7 @@ module LifterIR : LifterIR = struct
     | "PC" -> PC
     | "SP" -> SP
     | "PSTATE" -> PSTATE
-    | s when s.[0] = 'R' ->
-        Register (String.sub s 1 (String.length s) |> int_of_string)
+    | s when s.[0] = 'R' -> Register (String.sub s 1 (String.length s))
     | _ -> failwith "Invalid string"
 
   let var_eq a b = String.equal (string_of_var a) (string_of_var b)

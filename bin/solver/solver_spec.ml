@@ -10,6 +10,8 @@ module type SolverSpec = sig
 end
 
 module SolverSpec : SolverSpec = struct
+  type abstraction = Term.term list
+
   let rec ast_convert tm (b : Spec.Lang.spec_body) (s : SolverState.state) :
       Term.term option =
     let input_term n = SolverState.find_opt s n |> Option.get in
@@ -25,10 +27,14 @@ module SolverSpec : SolverSpec = struct
     | Post (pred, name) -> Some (input_term name)
     | Nondeterminism -> None
 
-  (* TODO *)
-  let translate tm (s : Spec.Lang.spec) : SolverState.state_function =
-   fun _ _ -> None
+  let translate tm (spec : Spec.Lang.spec) : SolverState.state_function =
+   fun state s ->
+    let body =
+      List.find_opt (fun var -> fst var |> String.equal s) spec
+      |> Option.map snd
+    in
+    Option.bind body (fun b -> ast_convert tm b state)
 
   (* TODO *)
-  let generate_pres _ _ = []
+  let generate_pres _ _ = [ [] ]
 end

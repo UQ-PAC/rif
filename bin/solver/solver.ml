@@ -22,61 +22,77 @@ module Solver : Solver = struct
 
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
+  type ctx = ip * sp * string list
 
-  let solve_in_order tm srt (i1, i2) (r, g) (als, pre) =
+  let solve_in_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
     let slv = SolverUtils.mk_solver tm in
     let initial =
-      SolverState.initialise slv srt [] |> SolverState.link_aliases als
+      SolverState.initialise slv srt syms |> SolverState.link_aliases als
     in
 
-    let rely =
-      SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
-    in
-    let guar =
+    let rely = SolverSpec.translate tm r |> SolverState.apply_pred slv srt in
+    let assert_guar_over =
       SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
 
-    let _final = initial |> rely |> guar i1 |> rely |> guar i2 in
+    let _final =
+      initial |> rely |> assert_guar_over i1 |> rely |> assert_guar_over i2
+    in
 
     SolverUtils.trivial_sygus tm srt slv;
     let result = Solver.check_synth slv in
+    print_endline "!!RESULT!!";
     SynthResult.has_solution result
 
-  let solve_out_order tm srt (i1, i2) (r, g) (als, pre) =
+  let solve_out_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
     let slv = SolverUtils.mk_solver tm in
     let initial =
-      SolverState.initialise slv srt [] |> SolverState.link_aliases als
+      SolverState.initialise slv srt syms |> SolverState.link_aliases als
     in
+    let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
+    let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
+    (* TODO: introduce preconditions as assumptions over pre-state *)
 
-    let rely =
-      SolverSpec.translate tm r |> SolverState.apply ~rely:true slv srt
-    in
-    let guar =
+    let rely = SolverSpec.translate tm r |> SolverState.apply_pred slv srt in
+    let assert_guar_over =
       SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
 
-    let _final = initial |> rely |> guar i2 |> rely |> guar i1 |> rely in
+    let final =
+      initial |> rely |> assert_guar_over i2 |> rely |> assert_guar_over i1
+      |> rely
+    in
 
-    true
+    let just_execute = SolverState.apply_inst slv srt in
+
+    initial |> rely |> SolverState.constrain_eq tm slv srt exists1;
+    exists1 |> just_execute i1 |> rely
+    |> SolverState.constrain_eq tm slv srt exists2;
+    exists2 |> just_execute i2 |> rely
+    |> SolverState.constrain_eq tm slv srt final;
+
+    let result = Solver.check_synth slv in
+    SynthResult.has_solution result
 
   let solve_pair tm srt (spec : sp) (pair : ip) =
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
+    let context = (pair, spec, inst_vars) in
 
-    let aliases = SolverState.make_aliases inst_vars spec_vars in
+    let aliases = SolverUtils.make_aliases inst_vars spec_vars in
     let preconditions = SolverSpec.generate_pres tm spec in
-    let combinations = SolverUtils.combine aliases preconditions in
+    let combinations = SolverUtils.cross_product aliases preconditions in
 
     let valid_in_order =
-      List.filter (solve_in_order tm srt pair spec) combinations
+      List.filter (solve_in_order tm srt context) combinations
     in
 
     let valid_out_order =
-      List.filter (solve_out_order tm srt pair spec) valid_in_order
+      List.filter (solve_out_order tm srt context) valid_in_order
     in
 
     List.length valid_in_order == List.length valid_out_order

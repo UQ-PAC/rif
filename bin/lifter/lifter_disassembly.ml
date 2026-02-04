@@ -72,7 +72,7 @@ module LifterDisassembly = struct
         (* Assign to register, stack pointer, program counter, or PSTATE *)
         | Stmt_Assign (LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i), _, _)
           ->
-            this#addWriteReg (Register (int_of_string i));
+            this#addWriteReg (Register i);
             DoChildren
         | Stmt_Assign (LExpr_Var (Ident "SP_EL0"), _, _) ->
             this#addWriteReg SP;
@@ -96,8 +96,9 @@ module LifterDisassembly = struct
 
       method! vexpr e =
         match e with
-        (* if we're doing children of a memory-affecting function, or we find a memory-affecting function, collect as addresses
-       otherwise, collect as normally read registers *)
+        (* if we're doing children of a memory-affecting function, or we find a
+           memory-affecting function, collect as addresses otherwise, collect
+           as normally read registers *)
         | Expr_TApply (FIdent ("Mem.set", _), _, addr :: values) ->
             this#addStoreRegs (this#subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
@@ -118,8 +119,18 @@ module LifterDisassembly = struct
       method exprAction ?(action = this#addReadReg) e =
         match e with
         (* Access of register, stack pointer, program counter, or PSTATE *)
+        | Expr_TApply
+            ( FIdent ("add_bits", _),
+              _,
+              [
+                Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i);
+                Expr_LitBits b;
+              ] ) ->
+            action
+              (Register (Printf.sprintf "%s+%i" i (int_of_string ("0b" ^ b))));
+            e
         | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
-            action (Register (int_of_string i));
+            action (Register i);
             e
         | Expr_Var (Ident "SP_EL0") ->
             action SP;

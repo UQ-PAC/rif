@@ -19,7 +19,7 @@ module SolverInst : SolverInst = struct
       method stmtlist tm state =
         let input_term n = SolverState.find_opt state n |> Option.get in
 
-        let cvc_of_slice (s : Asl_ast.slice) : Op.op =
+        let _cvc_of_slice (s : Asl_ast.slice) : Op.op =
           match s with _ -> SolverUtils.unexpected @@ Slice s
         in
 
@@ -38,7 +38,7 @@ module SolverInst : SolverInst = struct
           | _ when String.equal s "ZeroExtend" -> Kind.Null_term
           | _ when String.equal s "add_bits" -> Kind.Add
           | _ when String.equal s "Mem.write" ->
-              failwith "Found mem-write as RHS expression..."
+              failwith "Found mem-write as RHS expression...?"
           | _ -> SolverUtils.unexpected @@ Fun s
         in
 
@@ -73,8 +73,8 @@ module SolverInst : SolverInst = struct
               | k -> Term.mk_term tm k (Array.of_list (List.map cvc_of_expr es))
               )
           | Expr_Slices (e, slices) ->
-              (* Skip over slices for now*)
-              let _bits = List.map cvc_of_slice slices in
+              (* Skip over slices for now
+              let _bits = List.map cvc_of_slice slices in *)
               cvc_of_expr e
           | Expr_LitInt s -> Term.mk_int tm @@ int_of_string s
           | Expr_LitBits s ->
@@ -119,6 +119,8 @@ module SolverInst : SolverInst = struct
       |>
       (* If the instruction does not modify <name> then just find it in the input *)
       function
-      | None -> SolverState.find_opt state name
+      | None ->
+          print_endline ("function can't find " ^ name);
+          SolverState.find_opt state name
       | value -> value
 end

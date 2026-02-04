@@ -29,6 +29,17 @@ module SolverUtils = struct
         |> print_endline;
       t
 
+    let pp_assert ?(human = false) t =
+      Term.to_string t |> fun s ->
+      if String.equal s "true" then ()
+      else
+        (match human with
+        | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
+        | false -> s)
+        |> Printf.sprintf "(assert %s)"
+        |> print_endline;
+      t
+
     let pp_constrain ?(human = false) t =
       Term.to_string t |> fun s ->
       if String.equal s "true" then ()
@@ -97,9 +108,31 @@ module SolverUtils = struct
     Cvc5.Solver.set_option solver "sygus-enum" "smart";
     Cvc5.Solver.set_option solver "sygus-si" "all";
     Cvc5.Solver.set_option solver "incremental" "true";
+    Cvc5.Solver.set_option solver "wf-checking" "false";
 
     solver
 
-  (* TODO *)
-  let combine (_ : 'a list) (_ : 'b list) : ('a * 'b) list = []
+  let cross_product (l : 'a list) (l' : 'b list) : ('a * 'b) list =
+    List.map (fun e -> List.map (fun e' -> (e, e')) l') l |> List.concat
+
+  let make_aliases (inst_syms : string list) (spec_syms : string list) :
+      (string * string) list list =
+    let inst_mem_syms =
+      List.filter (String.starts_with ~prefix:"M") inst_syms
+    in
+
+    let rec powerset = function
+      | [] -> [ [] ]
+      | x :: xs ->
+          let ps = powerset xs in
+          ps @ List.map (fun ss -> x :: ss) ps
+    in
+
+    cross_product spec_syms inst_mem_syms
+    |> powerset
+    |>
+    (* Filter out aliases where two mappings start from the same spec-variable. *)
+    List.filter (fun l ->
+        List.length l
+        == (List.map fst l |> List.sort_uniq String.compare |> List.length))
 end

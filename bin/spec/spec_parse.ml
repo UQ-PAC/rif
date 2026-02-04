@@ -4,6 +4,7 @@ open Spec_lang
 module type SpecParse = sig
   (* Parse a string to a SpecLang AST *)
   val parse : string -> SpecLang.spec
+  val pp_spec : SpecLang.spec -> unit
 end
 
 module SpecParse : SpecParse = struct
@@ -79,6 +80,19 @@ module SpecParse : SpecParse = struct
     if String.equal s "" then []
     else
       parse_string ~consume:All all_specs s |> function
-      | Ok a -> a
-      | Error s -> failwith s
+      | Ok r -> r
+      | Error e -> failwith e
+
+  let pp_spec =
+    List.iter (fun (name, body) ->
+        let rec pp_body indent = function
+          | SpecLang.Term (k, b) ->
+              Printf.sprintf "(%s %s)" (Kind.to_string k) "..."
+          | SpecLang.Nondeterminism -> "???"
+          | SpecLang.Bool b -> string_of_bool b
+          | SpecLang.Const i -> string_of_int i
+          | SpecLang.Pre (pred, var) -> pred ^ "(pre(" ^ var
+          | SpecLang.Post (pred, var) -> pred ^ "(post(" ^ var
+        in
+        print_endline (name ^ " -> " ^ pp_body 0 body))
 end
