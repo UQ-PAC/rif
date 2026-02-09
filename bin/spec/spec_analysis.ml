@@ -4,11 +4,6 @@ module type SpecAnalysis = sig
   (* Sanity-check a parsed spec for loops *)
   val sanity : SpecLang.spec -> unit
   val spec_syms : SpecLang.spec * SpecLang.spec -> string list
-
-  (* Iterate, or map, through a spec, in topological order
-     i.e. if R_MR0() calls R_MR2() then we will see R_MR0() before R_MR2() *)
-  val topo_iter :
-    (string -> SpecLang.spec_body -> unit) -> SpecLang.spec -> unit
 end
 
 module SpecAnalysis : SpecAnalysis = struct
@@ -49,9 +44,11 @@ module SpecAnalysis : SpecAnalysis = struct
 
   let spec_syms spec =
     let sum_spec = fst spec @ snd spec in
-    List.map (fun (s, b) -> s :: global_variables b) sum_spec
-    |> List.flatten
-    |> List.sort_uniq String.compare
+    let syms = function
+      | SpecLang.Function (s, b) -> s :: global_variables b
+      | SpecLang.Constraint b -> global_variables b
+    in
+    List.map syms sum_spec |> List.flatten |> List.sort_uniq String.compare
 
   let nodes spec = List.map fst spec |> List.fold_left G.add_vertex G.empty
 
@@ -60,19 +57,27 @@ module SpecAnalysis : SpecAnalysis = struct
     |> List.flatten
     |> List.fold_left (fun gr (name, calls) -> G.add_edge gr name calls) graph
 
-  let induce_graph s = nodes s |> edges s
+  let unpack_functions =
+    List.filter_map (function
+      | SpecLang.Constraint _ -> None
+      | SpecLang.Function (s, b) -> Some (s, b))
+
+  let induce_graph (s : SpecLang.spec) =
+    unpack_functions s |> nodes |> edges (unpack_functions s)
 
   let sanity_check_for_cyclic_rely rely =
     J.iter_cycles (failwith "Sanity check: cyclic specification detected?") rely
 
-  let sanity spec =
-    () (*
+  let sanity spec = ()
+  (*
     let g = induce_graph spec in
     sanity_check_for_cyclic_rely g *)
 
+  (*
   let topo_fold action spec =
-    induce_graph spec |> T.fold (fun s -> action s (Node.find_in spec s))
+    induce_graph spec |> T.fold (fun s -> action s (Node.find_in (either spec) s))
 
   let topo_iter action spec =
-    induce_graph spec |> T.iter (fun s -> action s (Node.find_in spec s))
+    induce_graph spec |> T.iter (fun s -> action s (Node.find_in (either spec) s))
+  *)
 end

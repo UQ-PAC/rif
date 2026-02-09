@@ -25,14 +25,15 @@ module Solver : Solver = struct
   type ctx = ip * sp * string list
 
   let solve_in_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
+    print_endline "Solving in order.";
     let slv = SolverUtils.mk_solver tm in
     let initial =
       SolverState.initialise slv srt syms |> SolverState.link_aliases als
     in
 
-    let rely = SolverSpec.translate tm r |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -43,10 +44,12 @@ module Solver : Solver = struct
 
     SolverUtils.trivial_sygus tm srt slv;
     let result = Solver.check_synth slv in
-    print_endline "!!RESULT!!";
+    print_endline
+      (if SynthResult.has_solution result then "Success!\n" else "Failure\n");
     SynthResult.has_solution result
 
   let solve_out_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
+    print_endline "Solving out-of-order.\n";
     let slv = SolverUtils.mk_solver tm in
     let initial =
       SolverState.initialise slv srt syms |> SolverState.link_aliases als
@@ -55,9 +58,9 @@ module Solver : Solver = struct
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
     (* TODO: introduce preconditions as assumptions over pre-state *)
 
-    let rely = SolverSpec.translate tm r |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate tm g |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -76,6 +79,8 @@ module Solver : Solver = struct
     |> SolverState.constrain_eq tm slv srt final;
 
     let result = Solver.check_synth slv in
+    print_endline
+      (if SynthResult.has_solution result then "Success!\n" else "Failure\n");
     SynthResult.has_solution result
 
   let solve_pair tm srt (spec : sp) (pair : ip) =
@@ -90,6 +95,9 @@ module Solver : Solver = struct
     let valid_in_order =
       List.filter (solve_in_order tm srt context) combinations
     in
+
+    if 0 == List.length valid_in_order then
+      failwith "[ERROR] No pre-states are valid in-order. Check your spec!";
 
     let valid_out_order =
       List.filter (solve_out_order tm srt context) valid_in_order

@@ -119,8 +119,6 @@ module SolverInst : SolverInst = struct
       |>
       (* If the instruction does not modify <name> then just find it in the input *)
       function
-      | None ->
-          print_endline ("function can't find " ^ name);
-          SolverState.find_opt state name
+      | None -> SolverState.find_opt state name
       | value -> value
 end

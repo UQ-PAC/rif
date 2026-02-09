@@ -53,6 +53,11 @@ module SolverUtils = struct
 
     let pp_newterm name =
       Printf.sprintf "(declare-var %s Int)" name |> print_endline
+
+    let pp_func term =
+      Term.to_string term
+      |> Printf.sprintf "(define-fun %s -> Int)"
+      |> print_endline
   end
 
   let term_eq tm l r = Term.mk_term tm Kind.Equal (Array.of_list [ l; r ])

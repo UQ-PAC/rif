@@ -107,9 +107,7 @@ module LifterDisassembly = struct
             this#addLoadRegs (this#subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
-        | _ ->
-            ignore (this#exprAction e);
-            DoChildren
+        | _ -> if this#exprAction e then SkipChildren else DoChildren
 
       method subcontract e =
         let memc = new collector in
@@ -128,20 +126,20 @@ module LifterDisassembly = struct
               ] ) ->
             action
               (Register (Printf.sprintf "%s+%i" i (int_of_string ("0b" ^ b))));
-            e
+            true
         | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
             action (Register i);
-            e
+            true
         | Expr_Var (Ident "SP_EL0") ->
             action SP;
-            e
+            true
         | Expr_Var (Ident "_PC") ->
             action PC;
-            e
+            true
         | Expr_Field (Expr_Var (Ident "PSTATE"), _) ->
             action PSTATE;
-            e
-        | _ -> e
+            true
+        | _ -> false
 
       (* Nothing for arbitrary LExprs *)
       method! vlexpr _ = DoChildren

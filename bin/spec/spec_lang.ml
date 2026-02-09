@@ -1,25 +1,27 @@
 open Cvc5
 
 module type SpecLang = sig
-  type spec_body =
-    | Term of Kind.t * spec_body list
+  type body =
+    | Term of Kind.t * body list
     | Const of int
     | Bool of bool
     | Pre of string * string
     | Post of string * string
     | Nondeterminism
 
-  type spec = (string * spec_body) list
+  type contents = Function of string * body | Constraint of body
+  type spec = contents list
 end
 
 module SpecLang : SpecLang = struct
-  type spec_body =
-    | Term of Kind.t * spec_body list
+  type body =
+    | Term of Kind.t * body list
     | Const of int
     | Bool of bool
     | Pre of string * string
     | Post of string * string
     | Nondeterminism
 
-  type spec = (string * spec_body) list
+  type contents = Function of string * body | Constraint of body
+  type spec = contents list
 end
