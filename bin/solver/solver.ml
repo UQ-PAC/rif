@@ -22,13 +22,14 @@ module Solver : Solver = struct
 
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
-  type ctx = ip * sp * string list
+  type ctx = ip * sp * string list * string list
 
-  let solve_in_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
+  let solve_in_order tm srt (((i1, i2), (r, g), syms, ssyms) : ctx) (als, pre) =
     print_endline "Solving in order.";
     let slv = SolverUtils.mk_solver tm in
     let initial =
-      SolverState.initialise slv srt syms |> SolverState.link_aliases als
+      SolverState.initialise slv srt syms
+      |> SolverState.link_aliases slv srt als ssyms
     in
 
     let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
@@ -48,11 +49,13 @@ module Solver : Solver = struct
       (if SynthResult.has_solution result then "Success!\n" else "Failure\n");
     SynthResult.has_solution result
 
-  let solve_out_order tm srt (((i1, i2), (r, g), syms) : ctx) (als, pre) =
+  let solve_out_order tm srt (((i1, i2), (r, g), syms, ssyms) : ctx) (als, pre)
+      =
     print_endline "Solving out-of-order.\n";
     let slv = SolverUtils.mk_solver tm in
     let initial =
-      SolverState.initialise slv srt syms |> SolverState.link_aliases als
+      SolverState.initialise slv srt syms
+      |> SolverState.link_aliases slv srt als ssyms
     in
     let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
@@ -86,7 +89,7 @@ module Solver : Solver = struct
   let solve_pair tm srt (spec : sp) (pair : ip) =
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
-    let context = (pair, spec, inst_vars) in
+    let context = (pair, spec, inst_vars, spec_vars) in
 
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
     let preconditions = SolverSpec.generate_pres tm spec in

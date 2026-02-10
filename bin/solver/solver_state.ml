@@ -16,7 +16,14 @@ module type SolverState = sig
     state ->
     state
 
-  val link_aliases : (string * string) list -> state -> state
+  val link_aliases :
+    Cvc5.Solver.solver ->
+    Sort.sort ->
+    (string * string) list ->
+    string list ->
+    state ->
+    state
+
   val find_opt : state -> string -> Term.term option
   val dump : state -> unit
 
@@ -41,6 +48,14 @@ end
 
 module SolverState : SolverState = struct
   module S = Map.Make (String)
+
+  let nondeterminism_counter = ref 0
+
+  let fresh_nondeterminism slv srt =
+    incr nondeterminism_counter;
+    Cvc5.Solver.declare_sygus_var slv
+      ("???_" ^ string_of_int !nondeterminism_counter)
+      srt
 
   type state = string S.t * Term.term S.t
 
@@ -100,17 +115,21 @@ module SolverState : SolverState = struct
 
     (fst state, ufs)
 
-  let link_aliases (pairs : (string * string) list) (state : state) =
-    ( List.fold_left (fun acc (n1, n2) -> S.add n1 n2 acc) (fst state) pairs,
-      snd state )
+  let link_aliases slv srt (pairs : (string * string) list)
+      (ssyms : string list) (state : state) =
+    let aliasing =
+      List.fold_left (fun acc (n1, n2) -> S.add n1 n2 acc) (fst state) pairs
+    in
 
-  let nondeterminism_counter = ref 0
+    let bound = List.map fst @@ S.bindings aliasing in
+    let unbound =
+      List.filter (fun n -> not @@ List.exists (String.equal n) bound) ssyms
+    in
 
-  let fresh_nondeterminism slv srt =
-    incr nondeterminism_counter;
-    Cvc5.Solver.declare_sygus_var slv
-      ("???_" ^ string_of_int !nondeterminism_counter)
-      srt
+    ( aliasing,
+      List.fold_left
+        (fun acc name -> S.add name (fresh_nondeterminism slv srt) acc)
+        (snd state) unbound )
 
   let apply_pred slv srt (func : state_function) (state : state) =
     let promote = function
