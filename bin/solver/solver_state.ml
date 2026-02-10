@@ -6,6 +6,8 @@ module type SolverState = sig
   type state_function = state -> string -> Term.term option
   type state_constraints = state -> state -> Term.term list
 
+  type spec_predicates
+
   val initialise : Cvc5.Solver.solver -> Sort.sort -> string list -> state
 
   val reinitialise :
@@ -25,7 +27,11 @@ module type SolverState = sig
     state
 
   val find_opt : state -> string -> Term.term option
+  val find_predicate : spec_predicates -> string -> Term.term
   val dump : state -> unit
+
+  val apply_preconditions :
+    TermManager.tm -> Cvc5.Solver.solver -> Sort.sort -> state -> (string * string * bool) list -> spec_predicates
 
   val apply_pred :
     Cvc5.Solver.solver -> Sort.sort -> state_function -> state -> state
@@ -58,6 +64,7 @@ module SolverState : SolverState = struct
       srt
 
   type state = string S.t * Term.term S.t
+  type spec_predicates = Term.term S.t
 
   let dump (s : state) : unit =
     List.iter (fun (k, v) ->
@@ -79,6 +86,8 @@ module SolverState : SolverState = struct
     match S.find_opt k (fst s) with
     | Some alias -> S.find_opt alias (snd s)
     | None -> S.find_opt k (snd s)
+
+  let find_predicate p n = S.find n p
 
   type state_function = state -> string -> Term.term option
   type state_constraints = state -> state -> Term.term list
@@ -172,4 +181,21 @@ module SolverState : SolverState = struct
     List.iter (Cvc5.Solver.add_sygus_constraint slv) (pred state result);
 
     (fst state, snd result)
+
+  let apply_preconditions tm slv srt state (conds : (string * string * bool) list) =
+    let pred_sort = Sort.mk_pred_sort tm (Array.of_list [srt]) in
+
+    let preds = List.fold_left (fun acc (n,_,_) -> S.add n (Term.mk_const_s tm pred_sort n) acc) S.empty conds in
+
+    let applies = List.map (fun (name, input, value) ->
+      let pred = S.find name preds in
+      let input = find_opt state input |> Option.get in
+      let applied = Term.mk_term tm Kind.Apply_uf (Array.of_list [pred; input]) in
+      match value with
+      | false -> Term.mk_term tm Kind.Not (Array.of_list [applied])
+      | _ -> applied
+    ) conds in
+
+    List.iter (Cvc5.Solver.add_sygus_assume slv) applies;
+    preds
 end

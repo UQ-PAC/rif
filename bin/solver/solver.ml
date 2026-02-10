@@ -31,10 +31,12 @@ module Solver : Solver = struct
       SolverState.initialise slv srt syms
       |> SolverState.link_aliases slv srt als ssyms
     in
+    List.iter (fun (a,b,c) -> print_endline @@ Printf.sprintf ("%s(%s) is %B") a b c) pre;
+    let predicates = SolverState.apply_preconditions tm slv srt initial pre in
 
-    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r predicates |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g predicates |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -57,13 +59,14 @@ module Solver : Solver = struct
       SolverState.initialise slv srt syms
       |> SolverState.link_aliases slv srt als ssyms
     in
+    let predicates = SolverState.apply_preconditions tm slv srt initial pre in
+
     let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
-    (* TODO: introduce preconditions as assumptions over pre-state *)
 
-    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r predicates |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g predicates |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -92,7 +95,7 @@ module Solver : Solver = struct
     let context = (pair, spec, inst_vars, spec_vars) in
 
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
-    let preconditions = SolverSpec.generate_pres tm spec in
+    let preconditions = SolverSpec.generate_pres spec in
     let combinations = SolverUtils.cross_product aliases preconditions in
 
     let valid_in_order =
