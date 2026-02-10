@@ -30,4 +30,7 @@ A tool to uncover and resolve the effects of weak memory on a binary executable
 
 - `main.ml`: read command-line flags and call everything else
 
-Also in `lib/` there's a submodule for GTIRB protobuf definitions and another submodule for bindings that connect cvc5's C++ API to OCaml.
+Also in `lib/`:
+- a git submodule for GTIRB protobuf definitions
+- another git submodule for bindings that connect cvc5's C++ API to OCaml
+- `option.ml` which just provides `Option.get` but with nicer error messages.
