@@ -25,13 +25,11 @@ module Solver : Solver = struct
   type ctx = ip * sp * string list * string list
 
   let solve_in_order tm srt (((i1, i2), (r, g), syms, ssyms) : ctx) (als, pre) =
-    print_endline "Solving in order.";
     let slv = SolverUtils.mk_solver tm in
     let initial =
       SolverState.initialise slv srt syms
       |> SolverState.link_aliases slv srt als ssyms
     in
-    List.iter (fun (a,b,c) -> print_endline @@ Printf.sprintf ("%s(%s) is %B") a b c) pre;
     let predicates = SolverState.apply_preconditions tm slv srt initial pre in
 
     let rely = SolverSpec.translate_fn tm r predicates |> SolverState.apply_pred slv srt in
@@ -47,13 +45,10 @@ module Solver : Solver = struct
 
     SolverUtils.trivial_sygus tm srt slv;
     let result = Solver.check_synth slv in
-    print_endline
-      (if SynthResult.has_solution result then "Success!\n" else "Failure\n");
     SynthResult.has_solution result
 
   let solve_out_order tm srt (((i1, i2), (r, g), syms, ssyms) : ctx) (als, pre)
       =
-    print_endline "Solving out-of-order.\n";
     let slv = SolverUtils.mk_solver tm in
     let initial =
       SolverState.initialise slv srt syms
@@ -85,11 +80,10 @@ module Solver : Solver = struct
     |> SolverState.constrain_eq tm slv srt final;
 
     let result = Solver.check_synth slv in
-    print_endline
-      (if SynthResult.has_solution result then "Success!\n" else "Failure\n");
     SynthResult.has_solution result
 
-  let solve_pair tm srt (spec : sp) (pair : ip) =
+  let solve_pair tm srt (spec : sp) idx (pair : ip) =
+    print_endline @@ Printf.sprintf "[!] Solving pair %i" (idx+1);
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
     let context = (pair, spec, inst_vars, spec_vars) in
@@ -97,10 +91,12 @@ module Solver : Solver = struct
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
     let preconditions = SolverSpec.generate_pres spec in
     let combinations = SolverUtils.cross_product aliases preconditions in
+    print_endline @@ Printf.sprintf "    [!] Have %i possible pre-states" @@ List.length combinations;
 
     let valid_in_order =
       List.filter (solve_in_order tm srt context) combinations
     in
+    print_endline @@ Printf.sprintf "    [!] Have %i valid pre-states" @@ List.length valid_in_order;
 
     if 0 == List.length valid_in_order then
       failwith "[ERROR] No pre-states are valid in-order. Check your spec!";
@@ -108,6 +104,7 @@ module Solver : Solver = struct
     let valid_out_order =
       List.filter (solve_out_order tm srt context) valid_in_order
     in
+    print_endline @@ Printf.sprintf "    [!] Have %i successful pre-states" @@ List.length valid_out_order;
 
     List.length valid_in_order == List.length valid_out_order
 
@@ -115,5 +112,5 @@ module Solver : Solver = struct
     let tm = TermManager.mk_tm () in
     let srt = Sort.mk_int_sort tm in
 
-    List.filter (solve_pair tm srt spec) pairs
+    List.filteri (solve_pair tm srt spec) pairs
 end

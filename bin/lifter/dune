@@ -10,4 +10,6 @@
   aslp_offline.pc_aarch64
   ocaml-protoc-plugin
   rif.proto
-  ocamlgraph))
+  ocamlgraph
+  option
+ ))

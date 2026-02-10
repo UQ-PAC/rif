@@ -186,7 +186,8 @@ module Datalog : Datalog = struct
       (Printf.sprintf "[!] Found %i reorderable pairs..." (List.length reord));
 
     let find_block i =
-      Option.get (Helpers.func_rel2_int db Helpers.instruction_in_block i)
+      Option.get_or "Datalog can't find a block for this instruction?"
+        (Helpers.func_rel2_int db Helpers.instruction_in_block i)
     in
 
     List.map (fun (i1, i2) -> ((find_block i1, i1), (find_block i2, i2))) reord

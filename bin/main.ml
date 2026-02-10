@@ -9,7 +9,7 @@ let verb = ref false
 let input_gtirb = ref ""
 let rely = ref ""
 let guar = ref ""
-let concurrency = ref "easy"
+let concurrency = ref "safe"
 
 let speclist =
   [

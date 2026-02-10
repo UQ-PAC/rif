@@ -215,7 +215,7 @@ module LifterElf : LifterElf = struct
 
     let component_block_uuid = GtirbLookups.symbol_to_uuid symbols component in
 
-    let cfg = Option.get ir.cfg |> CFG.induce_graph in
+    let cfg = Option.get_or "GTIRB didn't produce a CFG!" ir.cfg |> CFG.induce_graph in
 
     if verb then
       print_endline

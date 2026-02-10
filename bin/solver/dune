@@ -3,4 +3,4 @@
  (name solver)
  (flags -w -27)
  (modules solver_state solver_utils solver_instruction solver_spec solver)
- (libraries cvc5 asli.libASL lifter spec))
+ (libraries cvc5 asli.libASL lifter spec option))

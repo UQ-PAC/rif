@@ -3,4 +3,4 @@
  (name spec)
  (flags -w -27)
  (modules spec_analysis spec_lang spec_parse spec)
- (libraries angstrom ocamlgraph cvc5))
+ (libraries angstrom ocamlgraph cvc5 option))

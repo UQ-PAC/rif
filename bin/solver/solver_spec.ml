@@ -15,14 +15,14 @@ end
 module SolverSpec : SolverSpec = struct
   let rec ast_convert tm (b : Spec.Lang.body) (s : SolverState.state)
       (s2 : SolverState.state option) p : Term.term option =
-    let input_term n = SolverState.find_opt s n |> Option.get in
-    let output_term n = SolverState.find_opt (Option.get s2) n |> Option.get in
+    let input_term n = SolverState.find_opt s n |> Option.get_or "Spec references undefined input term?" in
+    let output_term n = SolverState.find_opt (Option.get_or "Undefined reference to post-state" s2) n |> Option.get_or "Spec references undefined output term?" in
     match b with
     | Term (k, ns) ->
         Some
           (Term.mk_term tm k
              (Array.of_list
-             @@ List.map (fun r -> ast_convert tm r s s2 p |> Option.get) ns))
+             @@ List.map (fun r -> ast_convert tm r s s2 p |> Option.get_or "Subterms involving nondeterminism are undefined" ) ns))
     | Const i -> Some (Term.mk_int tm i)
     | Bool b -> Some (Term.mk_bool tm b)
     | Pre (pred, name) when String.equal pred "" -> Some (input_term name)
@@ -56,7 +56,7 @@ module SolverSpec : SolverSpec = struct
     in
     fun s1 s2 ->
       List.map
-        (fun b -> ast_convert tm b s1 (Some s2) p |> Option.get)
+        (fun b -> ast_convert tm b s1 (Some s2) p |> Option.get_or "Top-level nondeterminism in a constraint is undefined")
         constraints
 
   let generate_pres spec =

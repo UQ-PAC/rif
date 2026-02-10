@@ -146,7 +146,7 @@ module LifterDisassembly = struct
     end
 
   (* Make env separately, we don't need to re-make it every time *)
-  let env = Arm_env.aarch64_evaluation_environment () |> Option.get
+  let env = Arm_env.aarch64_evaluation_environment () |> Option.get_or "Failed to create aarch64 environment"
   let lift _pc op = Dis.retrieveDisassembly env (Dis.build_env env) op
 
   let collapse (ss : Asl_ast.stmt list) : LifterIR.instruction =
