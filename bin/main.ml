@@ -91,7 +91,15 @@ let () =
         f.aliasing;
       List.iter
         (fun (a, b, c) ->
-          print_endline @@ Printf.sprintf "    %s(%s) is %B" b a c)
+          print_endline @@ Printf.sprintf "    %s(%s) is %B" a b c)
         f.precondition;
+      print_endline "    First instruction behaviour:";
+      List.iter
+        (fun s -> print_endline @@ "      " ^ Lifter.IR.format_aslp s)
+        f.i1.semantics;
+      print_endline "    Second instruction behaviour:";
+      List.iter
+        (fun s -> print_endline @@ "      " ^ Lifter.IR.format_aslp s)
+        f.i2.semantics;
       print_endline "")
     failed

@@ -30,6 +30,7 @@ module type LifterIR = sig
 
   type blocks = block B.t
 
+  val format_aslp : LibASL.Asl_ast.stmt -> string
   val string_of_var : var -> string
   val var_of_string : string -> var
   val var_eq : var -> var -> bool
@@ -87,4 +88,8 @@ module LifterIR : LifterIR = struct
   }
 
   type blocks = block B.t
+
+  open LibASL
+
+  let format_aslp = Asl_utils.pp_stmt
 end
