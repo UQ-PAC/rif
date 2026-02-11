@@ -9,16 +9,30 @@ open Solver_spec
 module type Solver = sig
   module Utils : SolverUtils
 
+  type failure = {
+    i1 : Lifter.IR.instruction;
+    i2 : Lifter.IR.instruction;
+    aliasing : (string * string) list;
+    precondition : (string * string * bool) list;
+  }
+
   val solve_all :
     verb:bool ->
     mode:Utils.mode ->
     Spec.Lang.spec * Spec.Lang.spec ->
     (Lifter.IR.instruction * Lifter.IR.instruction) list ->
-    (Lifter.IR.instruction * Lifter.IR.instruction) list
+    failure list
 end
 
 module Solver : Solver = struct
   module Utils = SolverUtils
+
+  type failure = {
+    i1 : Lifter.IR.instruction;
+    i2 : Lifter.IR.instruction;
+    aliasing : (string * string) list;
+    precondition : (string * string * bool) list;
+  }
 
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
@@ -31,9 +45,10 @@ module Solver : Solver = struct
       |> SolverState.link_aliases slv srt als ssyms
       |> SolverState.add_preconditions tm slv srt pre
     in
-    SolverState.dump initial;
 
-    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
+    let rely =
+      SolverSpec.translate_fn tm r |> SolverState.apply_pred tm slv srt
+    in
     let assert_guar_over =
       SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
@@ -60,7 +75,9 @@ module Solver : Solver = struct
     let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
 
-    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
+    let rely =
+      SolverSpec.translate_fn tm r |> SolverState.apply_pred tm slv srt
+    in
     let assert_guar_over =
       SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
@@ -72,7 +89,7 @@ module Solver : Solver = struct
       |> rely
     in
 
-    let just_execute = SolverState.apply_inst slv srt in
+    let just_execute = SolverState.apply_inst tm slv srt in
 
     initial |> rely |> SolverState.constrain_eq tm slv srt exists1;
     exists1 |> just_execute i1 |> rely
@@ -83,7 +100,7 @@ module Solver : Solver = struct
     let result = Solver.check_synth slv in
     SynthResult.has_solution result
 
-  let solve_pair tm srt (spec : sp) idx (pair : ip) =
+  let solve_pair tm srt (spec : sp) idx (pair : ip) : failure list =
     print_endline @@ Printf.sprintf "[!] Solving pair %i" (idx + 1);
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
@@ -109,18 +126,23 @@ module Solver : Solver = struct
     if 0 == List.length valid_in_order then
       failwith "[ERROR] No pre-states are valid in-order. Check your spec!";
 
-    let valid_out_order =
-      List.filter (solve_out_order tm srt context) valid_in_order
+    let failing_out_order =
+      List.filter
+        (fun c -> solve_out_order tm srt context c |> not)
+        valid_in_order
     in
     print_endline
     @@ Printf.sprintf "    [!] Have %i successful pre-states"
-    @@ List.length valid_out_order;
+    @@ (List.length valid_in_order - List.length failing_out_order);
 
-    List.length valid_in_order == List.length valid_out_order
+    List.map
+      (fun (a, p) ->
+        { i1 = fst pair; i2 = snd pair; aliasing = a; precondition = p })
+      failing_out_order
 
-  let solve_all ~verb ~mode (spec : sp) (pairs : ip list) : ip list =
+  let solve_all ~verb ~mode (spec : sp) (pairs : ip list) : failure list =
     let tm = TermManager.mk_tm () in
     let srt = Sort.mk_int_sort tm in
 
-    List.filteri (solve_pair tm srt spec) pairs
+    List.mapi (solve_pair tm srt spec) pairs |> List.flatten
 end

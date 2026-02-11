@@ -13,6 +13,8 @@ module type LifterIR = sig
     store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
+    block : string;
+    index : int;
   }
 
   module I : Map.S with type key = int
@@ -62,6 +64,8 @@ module LifterIR : LifterIR = struct
     store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
+    block : string;
+    index : int;
   }
 
   let pair_syms p =

@@ -4,7 +4,7 @@ open Solver_utils
 module type SolverState = sig
   type state
   type state_function = state -> string -> Term.term option
-  type state_constraints = state -> state -> Term.term list
+  type state_constraints = state -> state -> Term.term option list
 
   val initialise : Cvc5.Solver.solver -> Sort.sort -> string list -> state
 
@@ -37,10 +37,20 @@ module type SolverState = sig
     state
 
   val apply_pred :
-    Cvc5.Solver.solver -> Sort.sort -> state_function -> state -> state
+    TermManager.tm ->
+    Cvc5.Solver.solver ->
+    Sort.sort ->
+    state_function ->
+    state ->
+    state
 
   val apply_inst :
-    Cvc5.Solver.solver -> Sort.sort -> state_function -> state -> state
+    TermManager.tm ->
+    Cvc5.Solver.solver ->
+    Sort.sort ->
+    state_function ->
+    state ->
+    state
 
   val constrain_eq :
     TermManager.tm -> Cvc5.Solver.solver -> Sort.sort -> state -> state -> unit
@@ -83,21 +93,19 @@ module SolverState : SolverState = struct
     { aliasing = S.empty; terms = S.empty; predicates = S.empty }
 
   let dump (s : state) : unit =
-    List.iter (fun (k, v) ->
-        print_endline k;
-        print_endline v)
-    @@ S.bindings @@ s.aliasing;
-
+    print_endline "Aliasing in state:";
     s.aliasing |> S.bindings
     |> List.map (fun (k, v) ->
            s.terms |> S.find v |> Term.to_string
            |> Printf.sprintf "%s -> %s -> %s" k v)
     |> List.iter print_endline;
 
+    print_endline "Terms in state:";
     s.terms |> S.bindings
     |> List.map (fun (k, v) -> Term.to_string v |> Printf.sprintf "%s -> %s" k)
     |> List.iter print_endline;
 
+    print_endline "Predicates in state:";
     s.predicates |> S.bindings
     |> List.map (fun (k, v) ->
            List.map (fun (a, b) -> (k, a, b)) @@ S.bindings v)
@@ -123,7 +131,7 @@ module SolverState : SolverState = struct
     | None -> None
 
   type state_function = state -> string -> Term.term option
-  type state_constraints = state -> state -> Term.term list
+  type state_constraints = state -> state -> Term.term option list
 
   let initialise slv srt (names : string list) : state =
     if verbose then List.iter SolverUtils.Printing.pp_newterm names;
@@ -181,7 +189,27 @@ module SolverState : SolverState = struct
           s.terms unbound;
     }
 
-  let apply_pred slv srt (func : state_function) (s : state) : state =
+  let update_predicates tm slv (s : state) map =
+    S.bindings map
+    |> List.fold_left
+         (fun acc (modified_key, modified_term) ->
+           let modified_val = Term.to_string modified_term in
+           let modified_map =
+             S.find_opt modified_key s.predicates
+             |> Option.value ~default:S.empty
+           in
+
+           match S.find_opt modified_val s.predicates with
+           | Some m -> S.add modified_key m acc
+           | None ->
+               S.add modified_key
+                 (S.map
+                    (fun _ -> fresh_boolean_nondeterminism tm slv)
+                    modified_map)
+                 acc)
+         s.predicates
+
+  let apply_pred tm slv srt (func : state_function) (s : state) : state =
     let promote = function
       | None -> fresh_nondeterminism slv srt
       | Some v -> v
@@ -193,10 +221,9 @@ module SolverState : SolverState = struct
       List.fold_left (fun acc (k, v) -> S.add k (promote v) acc) s.terms updated
     in
 
-    (* TODO: Modify "predicates" according to what changed *)
-    { s with terms = map }
+    { s with terms = map; predicates = update_predicates tm slv s map }
 
-  let apply_inst slv srt (func : state_function) (s : state) : state =
+  let apply_inst tm slv srt (func : state_function) (s : state) : state =
     let map =
       s.terms
       |> S.mapi (fun k v ->
@@ -204,8 +231,7 @@ module SolverState : SolverState = struct
              |> Option.get_or "Instruction references undefined variable?")
     in
 
-    (* TODO: Modify "predicates" according to what changed *)
-    { s with terms = map }
+    { s with terms = map; predicates = update_predicates tm slv s map }
 
   let constrain_eq tm slv srt (s1 : state) (s2 : state) =
     let s1_contents = s1.terms |> S.bindings in
@@ -225,9 +251,13 @@ module SolverState : SolverState = struct
 
   let assert_over tm slv srt (pred : state_constraints) (func : state_function)
       (s : state) : state =
-    let result = apply_inst slv srt func s in
+    let result = apply_inst tm slv srt func s in
 
-    List.iter (Cvc5.Solver.add_sygus_constraint slv) (pred s result);
+    pred s result
+    |> List.fold_left
+         (fun acc -> function None -> acc | Some v -> v :: acc)
+         []
+    |> List.iter (Cvc5.Solver.add_sygus_constraint slv);
 
     { s with terms = result.terms }
 

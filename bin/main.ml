@@ -72,9 +72,26 @@ let () =
     Solver.solve_all ~verb:!verb ~mode specification reorderable_pairs
   in
 
-  if List.length failed != 0 then
+  if List.length failed == 0 then
     print_endline
       "[!] SUCCESS: All reorderable instructions will uphold the R/G spec."
   else
     print_endline
-      "[!] FAILED: At least one reorderable pair did not uphold the R/G spec."
+      "[!] FAILED: At least one reorderable pair did not uphold the R/G spec.";
+
+  List.iteri
+    (fun idx (f : Solver.failure) ->
+      print_endline
+      @@ Printf.sprintf
+           "    [!] Failure %i:\n    Instruction %x reordering with %x, when:"
+           (idx + 1) f.i1.index f.i2.index;
+      List.iter
+        (fun (a, b) ->
+          print_endline @@ Printf.sprintf "    %s refers to %s" b a)
+        f.aliasing;
+      List.iter
+        (fun (a, b, c) ->
+          print_endline @@ Printf.sprintf "    %s(%s) is %B" b a c)
+        f.precondition;
+      print_endline "")
+    failed

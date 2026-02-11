@@ -20,6 +20,8 @@ module LifterDisassembly = struct
           store = [];
           fence = false;
           semantics = [];
+          block = "";
+          index = -1;
         }
 
       val mutable taints = []
@@ -168,18 +170,20 @@ module LifterDisassembly = struct
         if verb then print_endline ("[?] Unsupported opcode detected: " ^ opcode);
         []
 
-  let lift_and_summarise verb addr op = lift_one_op verb (addr, op) |> collapse
+  let lift_and_summarise verb block addr op =
+    let r = lift_one_op verb (addr, op) |> collapse in
+    { r with block; index = addr }
 
   let lift_all verb map =
     let a =
       LifterElf.B.bindings map
       |> List.fold_left
            (fun acc (k, v) ->
-             let do_instructions (is : (int * bytes) list) :
+             let do_instructions bname (is : (int * bytes) list) :
                  LifterIR.instruction LifterIR.I.t =
                List.fold_left
                  (fun acc (k, v) ->
-                   LifterIR.I.add k (lift_and_summarise verb k v) acc)
+                   LifterIR.I.add k (lift_and_summarise verb bname k v) acc)
                  LifterIR.I.empty is
              in
 
@@ -188,7 +192,7 @@ module LifterDisassembly = struct
                  name = b.name;
                  offset = b.address;
                  edges = b.edges;
-                 instructions = do_instructions b.instructions;
+                 instructions = do_instructions b.name b.instructions;
                }
              in
 

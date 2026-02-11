@@ -155,16 +155,24 @@ module SolverUtils = struct
         combination list =
       let unaliased_vars =
         List.filter
-          (fun v -> List.exists (fun a -> String.equal v @@ snd a) aliasing)
+          (fun v ->
+            not @@ List.exists (fun a -> String.equal v @@ snd a) aliasing)
           inst_vars
       in
-      let all_preds = List.map (fun (p, _, _) -> p) combination in
+      let all_preds =
+        List.map (fun (p, _, _) -> p) combination
+        |> List.sort_uniq String.compare
+      in
 
       let new_predicates = cross_product unaliased_vars all_preds in
       let all = List.length new_predicates |> combine in
 
-      List.map (List.map2 (fun (a, b) c -> (a, b, c)) new_predicates) all
-      |> List.map (fun a -> (aliasing, a))
+      let new_combs =
+        List.map
+          (fun l -> List.map2 (fun (a, b) c -> (a, b, c)) new_predicates l)
+          all
+      in
+      List.map (fun a -> (aliasing, a)) @@ (combination :: new_combs)
     in
 
     List.flatten @@ List.map expand_combination comb

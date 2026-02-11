@@ -29,15 +29,17 @@ module SolverSpec : SolverSpec = struct
     in
     match b with
     | Term (k, ns) ->
-        Some
-          (Term.mk_term tm k
-             (Array.of_list
-             @@ List.map
-                  (fun r ->
-                    ast_convert tm r s s2
-                    |> Option.get_or
-                         "Subterms involving nondeterminism are undefined")
-                  ns))
+        let next_layer =
+          List.map (fun b -> ast_convert tm b s s2) ns
+          |> List.fold_left
+               (function
+                 | None -> fun _ -> None
+                 | Some ls -> (
+                     function None -> None | Some v -> Some (v :: ls)))
+               (Some [])
+        in
+        Option.bind next_layer (fun vs ->
+            Some (Term.mk_term tm k (Array.of_list vs)))
     | Const i -> Some (Term.mk_int tm i)
     | Bool b -> Some (Term.mk_bool tm b)
     | Pre (pred, name) when String.equal pred "" -> Some (input_term name)
@@ -72,13 +74,7 @@ module SolverSpec : SolverSpec = struct
           | Spec.Lang.Constraint b -> Some b | Spec.Lang.Function _ -> None)
         spec
     in
-    fun s1 s2 ->
-      List.map
-        (fun b ->
-          ast_convert tm b s1 (Some s2)
-          |> Option.get_or
-               "Top-level nondeterminism in a constraint is undefined")
-        constraints
+    fun s1 s2 -> List.map (fun b -> ast_convert tm b s1 (Some s2)) constraints
 
   let generate_stage1_pres spec =
     let rec collect_preds : Spec.Lang.body -> (string * string) list = function
@@ -88,11 +84,16 @@ module SolverSpec : SolverSpec = struct
       | _ -> []
     in
 
+    let sort_pair a b =
+      let c1 = String.compare (fst a) (fst b) in
+      if c1 == 0 then String.compare (snd a) (snd b) else c1
+    in
+
     let pred_uses =
       fst spec @ snd spec
       |> List.map (function
              | Spec.Lang.Constraint b | Spec.Lang.Function (_, b) -> b)
-      |> List.map collect_preds |> List.flatten
+      |> List.map collect_preds |> List.flatten |> List.sort_uniq sort_pair
     in
 
     let all = List.length pred_uses |> SolverUtils.combine in
