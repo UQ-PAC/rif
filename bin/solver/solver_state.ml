@@ -149,6 +149,7 @@ module SolverState : SolverState = struct
 
     let var_inputs = List.map (Term.mk_var_s tm srt) names |> Array.of_list in
 
+    (* TODO(completeness): create grammar based on encountered operations *)
     let funcs =
       List.map
         (fun n ->

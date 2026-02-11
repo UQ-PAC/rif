@@ -52,6 +52,8 @@ module SpecParse : SpecParse = struct
     | ">" -> Kind.Gt
     | "<=" -> Kind.Leq
     | ">=" -> Kind.Geq
+    | a when String.starts_with ~prefix:"(" a ->
+        failwith "Extra bracket in operation-kind"
     | _ -> Kind.Null_term
 
   let body =

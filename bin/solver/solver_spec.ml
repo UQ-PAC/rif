@@ -17,6 +17,7 @@ end
 module SolverSpec : SolverSpec = struct
   let rec ast_convert tm (b : Spec.Lang.body) (s : SolverState.state)
       (s2 : SolverState.state option) : Term.term option =
+    (* TODO(nice): implement Safe/Easy mode distinction, generate (x -> (x)) automatically *)
     let input_term n =
       SolverState.find_opt s n
       |> Option.get_or "Spec references undefined input term?"

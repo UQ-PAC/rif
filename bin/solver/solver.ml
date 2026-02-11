@@ -108,10 +108,12 @@ module Solver : Solver = struct
 
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
     let preconditions = SolverSpec.generate_stage1_pres spec in
+    (* TODO(nice; config): manual specification of combinations *)
     let combinations =
       SolverUtils.cross_product aliases preconditions
       |> SolverUtils.generate_stage2_pres inst_vars
     in
+    (* TODO(nice): base output on --verbose flag *)
     print_endline
     @@ Printf.sprintf "    [!] Have %i possible pre-states"
     @@ List.length combinations;

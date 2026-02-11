@@ -13,6 +13,7 @@ module Datalog : Datalog = struct
   type db = DL.Logic.DB.t
 
   let load () =
+    (* TODO(architecture): compile this into the program somehow *)
     let db = DL.Logic.DB.create () in
     let () =
       if not (DL.Parse.load_file db "bin/reorderRules.dl") then
@@ -128,8 +129,8 @@ module Datalog : Datalog = struct
       (Helpers.query_rel2 db linear)
 
   let compute_reorderable_pairs (blocks : Lifter.IR.blocks) (verb : bool) =
+    (* TODO(performance): sliding window for datalog detection, only consider ~100 instructions at a time? *)
     let db = load () in
-    _linear_explain db;
 
     let base_facts_for_block (name : string) (block : Lifter.IR.block) : unit =
       (* This block's position relative to other blocks *)
@@ -170,8 +171,6 @@ module Datalog : Datalog = struct
       @@ List.fold_left gen_facts_over_instructions (List.hd instructions)
            (List.tl instructions)
     in
-
-    _linear_explain db;
 
     Lifter.IR.B.iter (fun k v -> base_facts_for_block k v) blocks;
 

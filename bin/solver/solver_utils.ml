@@ -164,7 +164,7 @@ module SolverUtils = struct
         |> List.sort_uniq String.compare
       in
 
-      let new_predicates = cross_product unaliased_vars all_preds in
+      let new_predicates = cross_product all_preds unaliased_vars in
       let all = List.length new_predicates |> combine in
 
       let new_combs =
@@ -172,8 +172,11 @@ module SolverUtils = struct
           (fun l -> List.map2 (fun (a, b) c -> (a, b, c)) new_predicates l)
           all
       in
-      List.map (fun a -> (aliasing, a)) @@ (combination :: new_combs)
+
+      List.map (fun a -> combination @ a) new_combs
+      |> List.map (fun a -> (aliasing, a))
     in
 
+    (* TODO(performance): Mini-taint-analysis, don't generate unnecessary register-value predicates. *)
     List.flatten @@ List.map expand_combination comb
 end

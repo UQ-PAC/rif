@@ -17,6 +17,7 @@ module type LifterElf = sig
 end
 
 module LifterElf : LifterElf = struct
+  (* TODO(architecture): DIY / library elf parser, take binary input instead of GTIRB *)
   open Rif
 
   type p_ir = IR.Gtirb.Proto.IR.t

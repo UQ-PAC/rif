@@ -25,6 +25,7 @@ let speclist =
       Arg.Set_string concurrency,
       "concurrency mode (safe / easy)" );
   ]
+(* TODO(nice): some sort of config-file argument instead of parameters *)
 
 let usage = Printf.sprintf "Usage: %s [options] input.gtirb\n" Sys.argv.(0)
 let argc = ref 0
@@ -79,6 +80,7 @@ let () =
     print_endline
       "[!] FAILED: At least one reorderable pair did not uphold the R/G spec.";
 
+  (* TODO(nice): generalise failures e.g. pred(x) is true and pred(x) is false *)
   List.iteri
     (fun idx (f : Solver.failure) ->
       print_endline
@@ -93,6 +95,8 @@ let () =
         (fun (a, b, c) ->
           print_endline @@ Printf.sprintf "    %s(%s) is %B" a b c)
         f.precondition;
+
+      (* TODO(nice): print memnonic instead of aslp semantics *)
       print_endline "    First instruction behaviour:";
       List.iter
         (fun s -> print_endline @@ "      " ^ Lifter.IR.format_aslp s)
