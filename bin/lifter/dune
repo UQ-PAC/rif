@@ -11,5 +11,4 @@
   ocaml-protoc-plugin
   rif.proto
   ocamlgraph
-  option
- ))
+  option))

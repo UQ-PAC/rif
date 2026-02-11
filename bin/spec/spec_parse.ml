@@ -63,7 +63,10 @@ module SpecParse : SpecParse = struct
         let post pred = var <* prime >>| fun v -> SpecLang.Post (pred, v) in
 
         (* word*(pre/post) *)
-        let predicate = (take_while is_word) >>= fun pred -> (with_parens @@ post pred) <|> (with_parens @@ pre pred) in
+        let predicate =
+          take_while is_word >>= fun pred ->
+          with_parens @@ post pred <|> with_parens @@ pre pred
+        in
 
         (* 0-9+ *)
         let const =

@@ -120,17 +120,22 @@ module SolverUtils = struct
   let cross_product (l : 'a list) (l' : 'b list) : ('a * 'b) list =
     List.map (fun e -> List.map (fun e' -> (e, e')) l') l |> List.concat
 
+  let rec powerset = function
+    | [] -> [ [] ]
+    | x :: xs ->
+        let ps = powerset xs in
+        ps @ List.map (fun ss -> x :: ss) ps
+
+  let rec combine = function
+    | 0 -> [ [] ]
+    | n ->
+        let c = combine (n - 1) in
+        List.map (List.cons true) c @ List.map (List.cons false) c
+
   let make_aliases (inst_syms : string list) (spec_syms : string list) :
       (string * string) list list =
     let inst_mem_syms =
       List.filter (String.starts_with ~prefix:"M") inst_syms
-    in
-
-    let rec powerset = function
-      | [] -> [ [] ]
-      | x :: xs ->
-          let ps = powerset xs in
-          ps @ List.map (fun ss -> x :: ss) ps
     in
 
     cross_product spec_syms inst_mem_syms
@@ -140,4 +145,27 @@ module SolverUtils = struct
     List.filter (fun l ->
         List.length l
         == (List.map fst l |> List.sort_uniq String.compare |> List.length))
+
+  type combination = (string * string) list * (string * string * bool) list
+
+  let generate_stage2_pres (inst_vars : string list) (comb : combination list) :
+      combination list =
+    (* For every inst_var that isn't pointed to by an alias, make more combinations for it *)
+    let expand_combination ((aliasing, combination) : combination) :
+        combination list =
+      let unaliased_vars =
+        List.filter
+          (fun v -> List.exists (fun a -> String.equal v @@ snd a) aliasing)
+          inst_vars
+      in
+      let all_preds = List.map (fun (p, _, _) -> p) combination in
+
+      let new_predicates = cross_product unaliased_vars all_preds in
+      let all = List.length new_predicates |> combine in
+
+      List.map (List.map2 (fun (a, b) c -> (a, b, c)) new_predicates) all
+      |> List.map (fun a -> (aliasing, a))
+    in
+
+    List.flatten @@ List.map expand_combination comb
 end

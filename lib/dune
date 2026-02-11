@@ -1,7 +1,19 @@
 (library
  (name rif)
  (public_name rif.proto)
- (modules AuxData ByteInterval CFG CodeBlock DataBlock IR Module Offset ProxyBlock Section Symbol SymbolicExpression)
+ (modules
+  AuxData
+  ByteInterval
+  CFG
+  CodeBlock
+  DataBlock
+  IR
+  Module
+  Offset
+  ProxyBlock
+  Section
+  Symbol
+  SymbolicExpression)
  (libraries ocaml-protoc-plugin cvc5))
 
 (rule
@@ -36,6 +48,6 @@
   (run protoc -I gtirb/proto --ocaml_out=. %{proto})))
 
 (library
-  (name option)
-  (public_name rif.option)
-  (modules option))
+ (name option)
+ (public_name rif.option)
+ (modules option))

@@ -17,7 +17,10 @@ module SolverInst : SolverInst = struct
       val mutable cse_prop : Term.term S.t = S.empty
 
       method stmtlist tm state =
-        let input_term n = SolverState.find_opt state n |> Option.get_or "Instruction references undefined variable?" in
+        let input_term n =
+          SolverState.find_opt state n
+          |> Option.get_or "Instruction references undefined variable?"
+        in
 
         let _cvc_of_slice (s : Asl_ast.slice) : Op.op =
           match s with _ -> SolverUtils.unexpected @@ Slice s

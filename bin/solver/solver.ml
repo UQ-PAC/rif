@@ -29,12 +29,13 @@ module Solver : Solver = struct
     let initial =
       SolverState.initialise slv srt syms
       |> SolverState.link_aliases slv srt als ssyms
+      |> SolverState.add_preconditions tm slv srt pre
     in
-    let predicates = SolverState.apply_preconditions tm slv srt initial pre in
+    SolverState.dump initial;
 
-    let rely = SolverSpec.translate_fn tm r predicates |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate_cn tm g predicates |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -53,15 +54,15 @@ module Solver : Solver = struct
     let initial =
       SolverState.initialise slv srt syms
       |> SolverState.link_aliases slv srt als ssyms
+      |> SolverState.add_preconditions tm slv srt pre
     in
-    let predicates = SolverState.apply_preconditions tm slv srt initial pre in
 
     let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
 
-    let rely = SolverSpec.translate_fn tm r predicates |> SolverState.apply_pred slv srt in
+    let rely = SolverSpec.translate_fn tm r |> SolverState.apply_pred slv srt in
     let assert_guar_over =
-      SolverSpec.translate_cn tm g predicates |> SolverState.assert_over tm slv srt
+      SolverSpec.translate_cn tm g |> SolverState.assert_over tm slv srt
     in
     let i1 = SolverInst.translate tm i1 in
     let i2 = SolverInst.translate tm i2 in
@@ -83,20 +84,27 @@ module Solver : Solver = struct
     SynthResult.has_solution result
 
   let solve_pair tm srt (spec : sp) idx (pair : ip) =
-    print_endline @@ Printf.sprintf "[!] Solving pair %i" (idx+1);
+    print_endline @@ Printf.sprintf "[!] Solving pair %i" (idx + 1);
     let inst_vars = Lifter.IR.pair_syms pair in
     let spec_vars = Spec.Analysis.spec_syms spec in
     let context = (pair, spec, inst_vars, spec_vars) in
 
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
-    let preconditions = SolverSpec.generate_pres spec in
-    let combinations = SolverUtils.cross_product aliases preconditions in
-    print_endline @@ Printf.sprintf "    [!] Have %i possible pre-states" @@ List.length combinations;
+    let preconditions = SolverSpec.generate_stage1_pres spec in
+    let combinations =
+      SolverUtils.cross_product aliases preconditions
+      |> SolverUtils.generate_stage2_pres inst_vars
+    in
+    print_endline
+    @@ Printf.sprintf "    [!] Have %i possible pre-states"
+    @@ List.length combinations;
 
     let valid_in_order =
       List.filter (solve_in_order tm srt context) combinations
     in
-    print_endline @@ Printf.sprintf "    [!] Have %i valid pre-states" @@ List.length valid_in_order;
+    print_endline
+    @@ Printf.sprintf "    [!] Have %i valid pre-states"
+    @@ List.length valid_in_order;
 
     if 0 == List.length valid_in_order then
       failwith "[ERROR] No pre-states are valid in-order. Check your spec!";
@@ -104,7 +112,9 @@ module Solver : Solver = struct
     let valid_out_order =
       List.filter (solve_out_order tm srt context) valid_in_order
     in
-    print_endline @@ Printf.sprintf "    [!] Have %i successful pre-states" @@ List.length valid_out_order;
+    print_endline
+    @@ Printf.sprintf "    [!] Have %i successful pre-states"
+    @@ List.length valid_out_order;
 
     List.length valid_in_order == List.length valid_out_order
 
