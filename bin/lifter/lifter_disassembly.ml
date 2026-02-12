@@ -1,5 +1,6 @@
 open Lifter_ir
 open Lifter_elf
+open Llvm_disass
 
 module type LifterDisassembly = sig
   val do_all : LifterElf.blocks -> LifterIR.blocks
@@ -20,6 +21,8 @@ module LifterDisassembly = struct
           store = [];
           fence = false;
           semantics = [];
+
+          readable = "";
           block = "";
           index = -1;
         }
@@ -172,7 +175,12 @@ module LifterDisassembly = struct
 
   let lift_and_summarise verb block addr op =
     let r = lift_one_op verb (addr, op) |> collapse in
-    { r with block; index = addr }
+    let endian_reverse b =
+      let len = Bytes.length b in
+      let getrev i = Bytes.get b (len - 1 - i) in
+      Bytes.init len getrev
+    in
+    { r with block; index = addr; readable = endian_reverse op |> assembly_of_bytes_opt |> Option.value ~default:"" }
 
   let lift_all verb map =
     let a =

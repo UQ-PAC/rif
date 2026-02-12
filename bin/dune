@@ -1,6 +1,18 @@
 (executable
  (public_name rif)
  (name main)
- (flags -w -27)
- (libraries rif option datalog datalog.caml_interface lifter solver spec)
+ (flags
+  -w
+  -27
+  :standard
+  (:include ../lib/llvm_disass/llvmconf.sexp))
+ (libraries
+  rif
+  option
+  datalog
+  datalog.caml_interface
+  lifter
+  solver
+  spec
+  llvm_disass)
  (modules main datalog))

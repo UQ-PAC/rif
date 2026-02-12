@@ -80,30 +80,45 @@ let () =
     print_endline
       "[!] FAILED: At least one reorderable pair did not uphold the R/G spec.";
 
-  (* TODO(nice): generalise failures e.g. pred(x) is true and pred(x) is false *)
+  let generalise_failure others (f : Solver.failure) =
+    let identical_except_for (f1 : Solver.failure) (f2 : Solver.failure) (pred, input) =
+      Lifter.IR.instruction_eq f1.i1 f2.i1 &&
+      Lifter.IR.instruction_eq f2.i2 f2.i2 &&
+      List.equal (fun (a,b) (c,d) -> String.equal a c && String.equal b d) f1.aliasing f2.aliasing &&
+      (
+        let f1pre = List.find_opt (fun (a,b,_) -> String.equal a pred && String.equal b input) f1.precondition in
+        let f2pre = List.find_opt (fun (a,b,_) -> String.equal a pred && String.equal b input) f2.precondition in
+        match (f1pre,f2pre) with
+        | (Some (_,_,false), Some (_,_,true)) -> true
+        | (Some (_,_,true), Some (_,_,false)) -> true
+        | _ -> false
+      )
+    in
+
+    let distinct_pres = List.filter (fun (p,i,_) -> not @@ List.exists (fun o -> identical_except_for f o (p,i)) others) f.precondition in
+    { f with precondition = distinct_pres }
+  in
+
+  let rec uniq_failures = function
+  | [] -> []
+  | x :: xs -> if List.exists (Solver.failure_eq x) xs then uniq_failures xs else x :: uniq_failures xs
+  in
+
+  List.map (generalise_failure failed) failed |>
+  uniq_failures |>
   List.iteri
     (fun idx (f : Solver.failure) ->
       print_endline
       @@ Printf.sprintf
-           "    [!] Failure %i:\n    Instruction %x reordering with %x, when:"
-           (idx + 1) f.i1.index f.i2.index;
+           "    [!] Failure %i:\n      Instruction [%x: %s] reordering with [%x: %s], when:"
+           (idx + 1) f.i1.index f.i1.readable f.i2.index f.i2.readable;
       List.iter
         (fun (a, b) ->
-          print_endline @@ Printf.sprintf "    %s refers to %s" b a)
+          print_endline @@ Printf.sprintf "      %s refers to %s" b a)
         f.aliasing;
       List.iter
         (fun (a, b, c) ->
-          print_endline @@ Printf.sprintf "    %s(%s) is %B" a b c)
+          print_endline @@ Printf.sprintf "      %s(%s) is %B" a b c)
         f.precondition;
 
-      (* TODO(nice): print memnonic instead of aslp semantics *)
-      print_endline "    First instruction behaviour:";
-      List.iter
-        (fun s -> print_endline @@ "      " ^ Lifter.IR.format_aslp s)
-        f.i1.semantics;
-      print_endline "    Second instruction behaviour:";
-      List.iter
-        (fun s -> print_endline @@ "      " ^ Lifter.IR.format_aslp s)
-        f.i2.semantics;
       print_endline "")
-    failed

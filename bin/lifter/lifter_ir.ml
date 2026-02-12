@@ -13,9 +13,12 @@ module type LifterIR = sig
     store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
+
+    readable : string;
     block : string;
     index : int;
   }
+  val instruction_eq : instruction -> instruction -> bool
 
   module I : Map.S with type key = int
 
@@ -65,9 +68,17 @@ module LifterIR : LifterIR = struct
     store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
+
+    readable : string;
     block : string;
     index : int;
   }
+
+  let instruction_eq i1 i2 =
+    let c1 = String.compare (i1.block) (i2.block) in
+    match c1 with
+    | 0 -> i1.index == i2.index
+    | _ -> false
 
   let pair_syms p =
     let inst_syms i =

@@ -145,6 +145,11 @@ module SolverUtils = struct
     List.filter (fun l ->
         List.length l
         == (List.map fst l |> List.sort_uniq String.compare |> List.length))
+    |>
+    (* TODO(completeness): consider, should code generate X->MR3 *and* Y->MR3? *)
+    List.filter (fun l ->
+        List.length l
+        == (List.map snd l |> List.sort_uniq String.compare |> List.length))
 
   type combination = (string * string) list * (string * string * bool) list
 

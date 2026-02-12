@@ -27,6 +27,9 @@
    "base64"
    "angstrom"
    "ocamlgraph"
+   "conf-llvm"
+   "ctypes"
+   "ctypes-foreign"
  )
  (tags (decompiler static-analysis formal-methods))
 )

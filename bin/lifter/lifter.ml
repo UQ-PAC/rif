@@ -56,8 +56,7 @@ module Lifter : Lifter = struct
 
         if verb then
           print_endline
-            (Printf.sprintf "    [!] Could reorder %s.%x <-> %s.%x" b1.name i1i
-               b2.name i2i);
+            (Printf.sprintf "    [!] Could reorder instructions %x <-> %x" i1i i2i);
 
         (IR.I.find i1i b1.instructions, IR.I.find i2i b2.instructions))
 end

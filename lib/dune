@@ -14,7 +14,7 @@
   Section
   Symbol
   SymbolicExpression)
- (libraries ocaml-protoc-plugin cvc5))
+ (libraries ocaml-protoc-plugin cvc5 llvm_disass))
 
 (rule
  (targets

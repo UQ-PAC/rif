@@ -18,6 +18,9 @@ depends: [
   "base64"
   "angstrom"
   "ocamlgraph"
+  "conf-llvm"
+  "ctypes"
+  "ctypes-foreign"
   "odoc" {with-doc}
 ]
 build: [

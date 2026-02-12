@@ -16,6 +16,8 @@ module type Solver = sig
     precondition : (string * string * bool) list;
   }
 
+  val failure_eq : failure -> failure -> bool
+
   val solve_all :
     verb:bool ->
     mode:Utils.mode ->
@@ -33,6 +35,12 @@ module Solver : Solver = struct
     aliasing : (string * string) list;
     precondition : (string * string * bool) list;
   }
+
+  let failure_eq f1 f2 =
+    Lifter.IR.instruction_eq f1.i1 f2.i1 &&
+    Lifter.IR.instruction_eq f1.i2 f2.i2 &&
+    List.equal (fun (a,b) (c,d) -> String.equal a c && String.equal b d) f1.aliasing f2.aliasing &&
+    List.equal (fun (a,b,c) (d,e,f) -> String.equal a d && String.equal b e && (c == f)) f1.precondition f2.precondition
 
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
