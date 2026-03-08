@@ -1,7 +1,7 @@
 open LibASL
 
 module type LifterIR = sig
-  type var = Register of string | PC | SP | PSTATE
+  type var = Memory of var | Add of var * int64 | Register of int | PC | SP | PSTATE
   type edgetype = Linear | Branch | Entry
   type edge = string * edgetype
   type edges = edge list
