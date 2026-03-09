@@ -63,6 +63,8 @@ let () =
 
   let basic_blocks = Lifter.parse !input_gtirb !component !verb in
 
+  Lifter.IR.dump basic_blocks;
+
   let specification = Spec.input !rely !guar in
 
   let pair_ids = Datalog.compute_reorderable_pairs basic_blocks !verb in

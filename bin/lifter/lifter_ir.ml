@@ -36,6 +36,7 @@ module type LifterIR = sig
   val var_of_string : string -> var
   val var_eq : var -> var -> bool
   val pair_syms : instruction * instruction -> string list
+  val dump : blocks -> unit
 end
 
 module LifterIR : LifterIR = struct
@@ -50,7 +51,7 @@ module LifterIR : LifterIR = struct
     | SP -> "SP"
     | PSTATE -> "PSTATE"
     | Memory v -> "M@" ^ string_of_var v
-    | Add (v,i) -> (string_of_var v) ^ Int64.to_string i
+    | Add (v,i) -> (string_of_var v) ^ "+" ^ Int64.to_string i
 
   let rec var_of_string = function
     | "PC" -> PC
@@ -100,6 +101,17 @@ module LifterIR : LifterIR = struct
   }
 
   type blocks = block B.t
+
+  let dump (bs : blocks) =
+    let dump_inst _a i =
+      print_endline (Printf.sprintf "%x: %s" i.index i.readable);
+      print_endline "READS:";
+        List.iter (fun v -> print_endline @@ "  " ^ (string_of_var v)) i.read;
+      print_endline "WRITES:";
+        List.iter (fun v -> print_endline @@ "  " ^ (string_of_var v)) i.write;
+    in
+    let dump_block = fun _ b -> I.iter dump_inst b.instructions in
+    B.iter dump_block bs
 
   open LibASL
 

@@ -75,9 +75,7 @@ module LifterDisassembly = struct
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
         | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
-            List.iter this#addReadReg (this#subcontract addr);
-            ignore (Asl_visitor.visit_exprs this values);
-            SkipChildren
+            failwith "stmt tcall read";
         | _ -> DoChildren
 
       (* If this expression is directly translatable to a LifterIR.Var, then do that & don't recurse *)
@@ -98,26 +96,25 @@ module LifterDisassembly = struct
         Otherwise, return None
       *)
       method takeExpr : (Asl_ast.expr -> unit option) =
-        let takeReg : (Asl_ast.expr -> LifterIR.var option) = function
+        let takeOff : (Asl_ast.expr -> int64) = function
+          | Expr_LitBits b -> Int64.of_string ("0b" ^ b)
+          | _ -> Int64.of_int 0
+        in
+        let rec takeReg : (Asl_ast.expr -> LifterIR.var option) = function
           | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
           | Expr_Var (Ident "SP_EL0") -> Some SP
           | Expr_Var (Ident "_PC") -> Some PC
           | Expr_Var (Ident "BTypeNext") -> Some PSTATE
           | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
+          | Expr_TApply (FIdent ("add_bits", _), _, [reg; off]) ->
+              takeReg reg |>
+              Option.map (fun v -> LifterIR.Add (v, takeOff off))
+          | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _tl) ->
+              takeReg addr |>
+              Option.map (fun v -> LifterIR.Memory v)
           | _ -> None
         in
-        let takeOff : (Asl_ast.expr -> int64) = function
-          | Expr_LitBits b -> Int64.of_string b
-          | _ -> Int64.of_int 0
-        in
-        function
-        | Expr_TApply ( FIdent ("add_bits", _), _, [reg; off]) ->
-          takeReg reg |>
-          Option.map (fun v -> LifterIR.Add (v, takeOff off)) |>
-          Option.map (fun v -> this#addReadReg v)
-        | r ->
-          takeReg r |>
-          Option.map (fun v -> this#addReadReg v)
+        fun e -> takeReg e |> Option.map (this#addReadReg)
     end
 
   (* Make env separately, we don't need to re-make it every time *)
