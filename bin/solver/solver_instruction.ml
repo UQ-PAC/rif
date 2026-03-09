@@ -18,6 +18,7 @@ module SolverInst : SolverInst = struct
 
       method stmtlist tm state =
         let input_term n =
+          print_endline n;
           SolverState.find_opt state n
           |> Option.get_or "Instruction references undefined variable?"
         in
@@ -47,7 +48,7 @@ module SolverInst : SolverInst = struct
 
         let cvc_of_write (e : Asl_ast.expr) : string =
           match e with
-          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> "MR" ^ i
+          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> "M@R" ^ i
           | Expr_TApply
               ( FIdent ("add_bits", _),
                 _,
@@ -55,7 +56,7 @@ module SolverInst : SolverInst = struct
                   Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i);
                   Expr_LitBits b;
                 ] ) ->
-              Printf.sprintf "MR%s+%i" i (int_of_string ("0b" ^ b))
+              Printf.sprintf "M@R%s+%i" i (int_of_string ("0b" ^ b))
           | _ -> SolverUtils.unexpected @@ Addr e
         in
 
