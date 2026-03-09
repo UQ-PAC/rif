@@ -17,8 +17,6 @@ module LifterDisassembly = struct
         {
           read = [];
           write = [];
-          load = [];
-          store = [];
           fence = false;
           semantics = [];
 
@@ -27,8 +25,15 @@ module LifterDisassembly = struct
           index = -1;
         }
 
-      val mutable taints = []
-      method get = gathered_facts
+      method get =
+        (* Scrub any top-level Adds *)
+        let scrub = List.map (function
+          | LifterIR.Add (v,_) -> v
+          | other -> other
+        ) in
+
+        { gathered_facts with
+          read = scrub gathered_facts.read; write = scrub gathered_facts.write }
 
       (* maintain uniqueness in our gathered facts *)
       method addReadReg (v : LifterIR.var) =
@@ -45,109 +50,74 @@ module LifterDisassembly = struct
               { gathered_facts with write = v :: gathered_facts.write }
         | _ -> ()
 
-      method addLoadReg (v : LifterIR.var) =
-        match List.find_opt (LifterIR.var_eq v) gathered_facts.load with
-        | None ->
-            gathered_facts <-
-              { gathered_facts with load = v :: gathered_facts.load }
-        | _ -> ()
-
-      method addLoadRegs (vs : LifterIR.var list) = List.iter this#addLoadReg vs
-
-      method addStoreReg (v : LifterIR.var) =
-        match List.find_opt (LifterIR.var_eq v) gathered_facts.store with
-        | None ->
-            gathered_facts <-
-              { gathered_facts with store = v :: gathered_facts.store }
-        | _ -> ()
-
-      method addStoreRegs (vs : LifterIR.var list) =
-        List.iter this#addStoreReg vs
-
       method sanityOnlyRead =
-        if
-          List.length gathered_facts.write > 0
-          || List.length gathered_facts.load > 0
-          || List.length gathered_facts.store > 0
-        then failwith "Internal error :(";
+        if List.length gathered_facts.write > 0 then failwith "Internal error :(";
         gathered_facts.read
 
       method! vstmt s =
+        let takeReg : (Asl_ast.lexpr -> LifterIR.var option) = function
+          | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
+          | LExpr_Var (Ident "SP_EL0") -> Some SP
+          | LExpr_Var (Ident "_PC") -> Some PC
+          | LExpr_Var (Ident "BTypeNext") -> Some PSTATE
+          | LExpr_Field (LExpr_Var (Ident "PSTATE"), _) -> Some PSTATE
+          | _ -> None
+        in
         match s with
         (* Assign to register, stack pointer, program counter, or PSTATE *)
-        | Stmt_Assign (LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i), _, _)
-          ->
-            this#addWriteReg (Register i);
-            DoChildren
-        | Stmt_Assign (LExpr_Var (Ident "SP_EL0"), _, _) ->
-            this#addWriteReg SP;
-            DoChildren
-        | Stmt_Assign (LExpr_Var (Ident "_PC"), _, _) ->
-            this#addWriteReg PC;
-            DoChildren
-        | Stmt_Assign (LExpr_Field (LExpr_Var (Ident "PSTATE"), _), _, _) ->
-            this#addWriteReg PSTATE;
-            DoChildren
+        | Stmt_Assign (lhs, e, _) ->
+            Option.iter this#addWriteReg (takeReg lhs);
+            ignore (Asl_visitor.visit_expr this e);
+            SkipChildren
         (* Calls to memory-affecting functions; mark it *)
         | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: values, _) ->
-            this#addStoreRegs (this#subcontract addr);
+            List.iter this#addWriteReg (this#subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
         | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
-            this#addLoadRegs (this#subcontract addr);
+            List.iter this#addReadReg (this#subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
         | _ -> DoChildren
 
-      method! vexpr e =
-        match e with
-        (* if we're doing children of a memory-affecting function, or we find a
-           memory-affecting function, collect as addresses otherwise, collect
-           as normally read registers *)
-        | Expr_TApply (FIdent ("Mem.set", _), _, addr :: values) ->
-            this#addStoreRegs (this#subcontract addr);
-            ignore (Asl_visitor.visit_exprs this values);
-            SkipChildren
-        | Expr_TApply (FIdent ("Mem.read", _), _, addr :: values) ->
-            this#addLoadRegs (this#subcontract addr);
-            ignore (Asl_visitor.visit_exprs this values);
-            SkipChildren
-        | _ -> if this#exprAction e then SkipChildren else DoChildren
+      (* If this expression is directly translatable to a LifterIR.Var, then do that & don't recurse *)
+      method! vexpr e = if Option.is_some @@ this#takeExpr e then SkipChildren else DoChildren
 
+      (* Spawn a new instance of this (collector), visit things, and pull out only Read variables.
+         For the RHS of a Mem.set or Mem.read. *)
       method subcontract e =
         let memc = new collector in
         ignore (Asl_visitor.visit_expr memc e);
-        memc#sanityOnlyRead
+        List.map (fun v -> LifterIR.Memory v) memc#sanityOnlyRead
 
-      method exprAction ?(action = this#addReadReg) e =
-        match e with
-        (* Access of register, stack pointer, program counter, or PSTATE *)
-        | Expr_TApply
-            ( FIdent ("add_bits", _),
-              _,
-              [
-                Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i);
-                Expr_LitBits b;
-              ] ) ->
-            action
-              (Register (Printf.sprintf "%s+%i" i (int_of_string ("0b" ^ b))));
-            true
-        | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
-            action (Register i);
-            true
-        | Expr_Var (Ident "SP_EL0") ->
-            action SP;
-            true
-        | Expr_Var (Ident "_PC") ->
-            action PC;
-            true
-        | Expr_Field (Expr_Var (Ident "PSTATE"), _) ->
-            action PSTATE;
-            true
-        | _ -> false
-
-      (* Nothing for arbitrary LExprs *)
-      method! vlexpr _ = DoChildren
+      (*
+        If the expression is a base-level variable that we care about,
+          add it to the read regs, and return Some ()
+        If the expression is an add where the LHS is a base-level variable
+          that we care about, parse it and return Some ()
+        Otherwise, return None
+      *)
+      method takeExpr : (Asl_ast.expr -> unit option) =
+        let takeReg : (Asl_ast.expr -> LifterIR.var option) = function
+          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
+          | Expr_Var (Ident "SP_EL0") -> Some SP
+          | Expr_Var (Ident "_PC") -> Some PC
+          | Expr_Var (Ident "BTypeNext") -> Some PSTATE
+          | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
+          | _ -> None
+        in
+        let takeOff : (Asl_ast.expr -> int64) = function
+          | Expr_LitBits b -> Int64.of_string b
+          | _ -> Int64.of_int 0
+        in
+        function
+        | Expr_TApply ( FIdent ("add_bits", _), _, [reg; off]) ->
+          takeReg reg |>
+          Option.map (fun v -> LifterIR.Add (v, takeOff off)) |>
+          Option.map (fun v -> this#addReadReg v)
+        | r ->
+          takeReg r |>
+          Option.map (fun v -> this#addReadReg v)
     end
 
   (* Make env separately, we don't need to re-make it every time *)

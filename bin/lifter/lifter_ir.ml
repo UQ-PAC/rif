@@ -9,8 +9,6 @@ module type LifterIR = sig
   type instruction = {
     read : var list;
     write : var list;
-    load : var list;
-    store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
 
@@ -44,19 +42,25 @@ module LifterIR : LifterIR = struct
   module I = Map.Make (Int)
   module B = Map.Make (String)
 
-  type var = Register of string | PC | SP | PSTATE
+  type var = Memory of var | Add of var * int64 | Register of int | PC | SP | PSTATE
 
-  let string_of_var = function
-    | Register i -> "R" ^ i
+  let rec string_of_var = function
+    | Register i -> "R" ^ (string_of_int i)
     | PC -> "PC"
     | SP -> "SP"
     | PSTATE -> "PSTATE"
+    | Memory v -> "M@" ^ string_of_var v
+    | Add (v,i) -> (string_of_var v) ^ Int64.to_string i
 
-  let var_of_string = function
+  let rec var_of_string = function
     | "PC" -> PC
     | "SP" -> SP
     | "PSTATE" -> PSTATE
-    | s when s.[0] = 'R' -> Register (String.sub s 1 (String.length s))
+    | s when s.[0] = 'M' -> Memory (var_of_string @@ String.sub s 2 (String.length s))
+    | s when String.contains s '+' ->
+        let sp = String.split_on_char '+' s in
+        Add (var_of_string @@ List.hd sp, List.rev sp |> List.hd |> Int64.of_string)
+    | s when s.[0] = 'R' -> Register (int_of_string @@ String.sub s 1 (String.length s))
     | _ -> failwith "Invalid string"
 
   let var_eq a b = String.equal (string_of_var a) (string_of_var b)
@@ -64,8 +68,6 @@ module LifterIR : LifterIR = struct
   type instruction = {
     read : var list;
     write : var list;
-    load : var list;
-    store : var list;
     fence : bool;
     semantics : LibASL.Asl_ast.stmt list;
 
@@ -82,8 +84,7 @@ module LifterIR : LifterIR = struct
 
   let pair_syms p =
     let inst_syms i =
-      List.map (fun v -> string_of_var v |> ( ^ ) "M") (i.load @ i.store)
-      @ List.map string_of_var (i.read @ i.write)
+      List.map string_of_var (i.read @ i.write)
     in
     inst_syms (fst p) @ inst_syms (snd p)
 
