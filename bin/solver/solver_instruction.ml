@@ -48,6 +48,7 @@ module SolverInst : SolverInst = struct
 
         let cvc_of_write (e : Asl_ast.expr) : string =
           match e with
+          | Expr_Var (Ident "SP_EL0") -> "SP"
           | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> "M@R" ^ i
           | Expr_TApply
               ( FIdent ("add_bits", _),

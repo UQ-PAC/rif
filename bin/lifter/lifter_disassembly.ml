@@ -9,9 +9,12 @@ end
 module LifterDisassembly = struct
   open LibASL
 
+  module S = Map.Make (String)
+
   class collector =
     object (this)
       inherit Asl_visitor.nopAslVisitor
+      val mutable cse_prop : Asl_ast.expr S.t = S.empty
 
       val mutable gathered_facts : LifterIR.instruction =
         {
@@ -26,14 +29,29 @@ module LifterDisassembly = struct
         }
 
       method get =
+        (* Collapse Add (Add (v, 1), 2) into Add (v, 3) *)
+        let collapse =
+          let (+) = Int64.add in
+          let rec inner (count : int64) = function
+            | LifterIR.Memory v -> LifterIR.Memory (inner 0L v)
+            | Add (v,i) -> inner (count + i) v
+            | v -> if count == 0L then v else LifterIR.Add (v, count)
+          in
+          List.map (fun e -> inner 0L e)
+        in
+
         (* Scrub any top-level Adds *)
         let scrub = List.map (function
           | LifterIR.Add (v,_) -> v
           | other -> other
         ) in
 
+        let process = fun v -> collapse v |> scrub in
+
         { gathered_facts with
-          read = scrub gathered_facts.read; write = scrub gathered_facts.write }
+          read = process gathered_facts.read; write = process gathered_facts.write }
+
+      method passin map = cse_prop <- map
 
       (* maintain uniqueness in our gathered facts *)
       method addReadReg (v : LifterIR.var) =
@@ -71,22 +89,25 @@ module LifterDisassembly = struct
             SkipChildren
         (* Calls to memory-affecting functions; mark it *)
         | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: values, _) ->
-            List.iter this#addWriteReg (this#subcontract addr);
+            let subcontract e =
+              let memc = new collector in
+              memc#passin cse_prop;
+              ignore @@ Asl_visitor.visit_expr memc e;
+              memc#sanityOnlyRead
+            in
+
+            List.iter (fun v -> this#addWriteReg (LifterIR.Memory v)) (subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
         | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
             failwith "stmt tcall read";
+        | Stmt_ConstDecl (_, Ident n, exp, _) ->
+            cse_prop <- S.add n exp cse_prop;
+            DoChildren
         | _ -> DoChildren
 
       (* If this expression is directly translatable to a LifterIR.Var, then do that & don't recurse *)
       method! vexpr e = if Option.is_some @@ this#takeExpr e then SkipChildren else DoChildren
-
-      (* Spawn a new instance of this (collector), visit things, and pull out only Read variables.
-         For the RHS of a Mem.set or Mem.read. *)
-      method subcontract e =
-        let memc = new collector in
-        ignore (Asl_visitor.visit_expr memc e);
-        List.map (fun v -> LifterIR.Memory v) memc#sanityOnlyRead
 
       (*
         If the expression is a base-level variable that we care about,
@@ -105,6 +126,8 @@ module LifterDisassembly = struct
           | Expr_Var (Ident "SP_EL0") -> Some SP
           | Expr_Var (Ident "_PC") -> Some PC
           | Expr_Var (Ident "BTypeNext") -> Some PSTATE
+          | Expr_Var (Ident n) ->
+              Option.bind (S.find_opt n cse_prop) takeReg
           | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
           | Expr_TApply (FIdent ("add_bits", _), _, [reg; off]) ->
               takeReg reg |>
