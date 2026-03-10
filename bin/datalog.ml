@@ -146,13 +146,17 @@ module Datalog : Datalog = struct
         (* Individual instruction facts for i1; i2 happens in the next "fold" *)
         List.iter
           (function
-            | Lifter.IR.Memory v -> Helpers.add_load_reg db (fst i1) (Lifter.IR.string_of_var v)
-            | var -> Helpers.add_source_reg db (fst i1) (Lifter.IR.string_of_var var))
+            | Lifter.IR.Memory v ->
+                Helpers.add_load_reg db (fst i1) (Lifter.IR.string_of_var v)
+            | var ->
+                Helpers.add_source_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).read;
         List.iter
           (function
-            | Lifter.IR.Memory v -> Helpers.add_store_reg db (fst i1) (Lifter.IR.string_of_var v)
-            | var -> Helpers.add_dest_reg db (fst i1) (Lifter.IR.string_of_var var))
+            | Lifter.IR.Memory v ->
+                Helpers.add_store_reg db (fst i1) (Lifter.IR.string_of_var v)
+            | var ->
+                Helpers.add_dest_reg db (fst i1) (Lifter.IR.string_of_var var))
           (snd i1).write;
         if (snd i1).fence then Helpers.add_fence_inst db (fst i1);
         if hasCtrl (snd i1) then Helpers.add_control_inst db (fst i1);

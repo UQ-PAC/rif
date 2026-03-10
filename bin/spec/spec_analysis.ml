@@ -4,6 +4,7 @@ module type SpecAnalysis = sig
   (* Sanity-check a parsed spec for loops *)
   val sanity : SpecLang.spec -> unit
   val spec_syms : SpecLang.spec * SpecLang.spec -> string list
+  val relevant_preds : SpecLang.spec -> SpecLang.spec -> (string * string) list
 end
 
 module SpecAnalysis : SpecAnalysis = struct
@@ -35,6 +36,20 @@ module SpecAnalysis : SpecAnalysis = struct
     | SpecLang.Pre (_, n) -> [ n ]
     | SpecLang.Term (_, ss) -> List.map global_variables ss |> List.flatten
     | _ -> []
+
+  let relevant_preds (r : SpecLang.spec) (g : SpecLang.spec) :
+      (string * string) list =
+    let rec for_body = function
+      | SpecLang.Post (f, n) -> [ (f, n) ]
+      | SpecLang.Pre (f, n) -> [ (f, n) ]
+      | SpecLang.Term (_, ss) -> List.map for_body ss |> List.flatten
+      | _ -> []
+    in
+    let for_contents = function
+      | SpecLang.Function (_, b) | SpecLang.Constraint b -> for_body b
+    in
+    let specs = r @ g in
+    List.flatten @@ List.map for_contents specs
 
   let rec has_nondeterminism = function
     | SpecLang.Nondeterminism -> true

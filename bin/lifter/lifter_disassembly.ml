@@ -8,7 +8,6 @@ end
 
 module LifterDisassembly = struct
   open LibASL
-
   module S = Map.Make (String)
 
   class collector =
@@ -21,9 +20,7 @@ module LifterDisassembly = struct
           read = [];
           write = [];
           fence = false;
-
           semantics = [];
-
           readable = "";
           block = "";
           index = -1;
@@ -34,22 +31,24 @@ module LifterDisassembly = struct
         let collapse =
           let rec inner (count : int64) = function
             | LifterIR.Memory v -> LifterIR.Memory (inner 0L v)
-            | Add (v,i) -> inner (Int64.add count i) v
+            | Add (v, i) -> inner (Int64.add count i) v
             | v -> if count == 0L then v else LifterIR.Add (v, count)
           in
           List.map (fun e -> inner 0L e)
         in
 
         (* Scrub any top-level Adds *)
-        let scrub = List.map (function
-          | LifterIR.Add (v,_) -> v
-          | other -> other
-        ) in
+        let scrub =
+          List.map (function LifterIR.Add (v, _) -> v | other -> other)
+        in
 
         let process = fun v -> collapse v |> scrub in
 
-        { gathered_facts with
-          read = process gathered_facts.read; write = process gathered_facts.write }
+        {
+          gathered_facts with
+          read = process gathered_facts.read;
+          write = process gathered_facts.write;
+        }
 
       method passin map = cse_prop <- map
 
@@ -69,12 +68,14 @@ module LifterDisassembly = struct
         | _ -> ()
 
       method sanityOnlyRead =
-        if List.length gathered_facts.write > 0 then failwith "Internal error :(";
+        if List.length gathered_facts.write > 0 then
+          failwith "Internal error :(";
         gathered_facts.read
 
       method! vstmt s =
-        let takeReg : (Asl_ast.lexpr -> LifterIR.var option) = function
-          | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
+        let takeReg : Asl_ast.lexpr -> LifterIR.var option = function
+          | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) ->
+              Some (Register (int_of_string i))
           | LExpr_Var (Ident "SP_EL0") -> Some SP
           | LExpr_Var (Ident "_PC") -> Some PC
           | LExpr_Var (Ident "BTypeNext") -> Some PSTATE
@@ -96,18 +97,21 @@ module LifterDisassembly = struct
               memc#sanityOnlyRead
             in
 
-            List.iter (fun v -> this#addWriteReg (LifterIR.Memory v)) (subcontract addr);
+            List.iter
+              (fun v -> this#addWriteReg (LifterIR.Memory v))
+              (subcontract addr);
             ignore (Asl_visitor.visit_exprs this values);
             SkipChildren
         | Stmt_TCall (FIdent ("Mem.read", _), _, addr :: values, _) ->
-            failwith "stmt tcall read";
+            failwith "stmt tcall read"
         | Stmt_ConstDecl (_, Ident n, exp, _) ->
             cse_prop <- S.add n exp cse_prop;
             DoChildren
         | _ -> DoChildren
 
       (* If this expression is directly translatable to a LifterIR.Var, then do that & don't recurse *)
-      method! vexpr e = if Option.is_some @@ this#takeExpr e then SkipChildren else DoChildren
+      method! vexpr e =
+        if Option.is_some @@ this#takeExpr e then SkipChildren else DoChildren
 
       (*
         If the expression is a base-level variable that we care about,
@@ -116,28 +120,26 @@ module LifterDisassembly = struct
           that we care about, parse it and return Some ()
         Otherwise, return None
       *)
-      method takeExpr : (Asl_ast.expr -> unit option) =
-        let takeOff : (Asl_ast.expr -> int64) = function
+      method takeExpr : Asl_ast.expr -> unit option =
+        let takeOff : Asl_ast.expr -> int64 = function
           | Expr_LitBits b -> Int64.of_string ("0b" ^ b)
           | _ -> Int64.of_int 0
         in
-        let rec takeReg : (Asl_ast.expr -> LifterIR.var option) = function
-          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
+        let rec takeReg : Asl_ast.expr -> LifterIR.var option = function
+          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
+              Some (Register (int_of_string i))
           | Expr_Var (Ident "SP_EL0") -> Some SP
           | Expr_Var (Ident "_PC") -> Some PC
           | Expr_Var (Ident "BTypeNext") -> Some PSTATE
-          | Expr_Var (Ident n) ->
-              Option.bind (S.find_opt n cse_prop) takeReg
+          | Expr_Var (Ident n) -> Option.bind (S.find_opt n cse_prop) takeReg
           | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
-          | Expr_TApply (FIdent ("add_bits", _), _, [reg; off]) ->
-              takeReg reg |>
-              Option.map (fun v -> LifterIR.Add (v, takeOff off))
+          | Expr_TApply (FIdent ("add_bits", _), _, [ reg; off ]) ->
+              takeReg reg |> Option.map (fun v -> LifterIR.Add (v, takeOff off))
           | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _tl) ->
-              takeReg addr |>
-              Option.map (fun v -> LifterIR.Memory v)
+              takeReg addr |> Option.map (fun v -> LifterIR.Memory v)
           | _ -> None
         in
-        fun e -> takeReg e |> Option.map (this#addReadReg)
+        fun e -> takeReg e |> Option.map this#addReadReg
     end
 
   (* Make env separately, we don't need to re-make it every time *)
@@ -170,7 +172,13 @@ module LifterDisassembly = struct
       let getrev i = Bytes.get b (len - 1 - i) in
       Bytes.init len getrev
     in
-    { r with block; index = addr; readable = endian_reverse op |> assembly_of_bytes_opt |> Option.value ~default:"" }
+    {
+      r with
+      block;
+      index = addr;
+      readable =
+        endian_reverse op |> assembly_of_bytes_opt |> Option.value ~default:"";
+    }
 
   let lift_all verb map =
     let a =

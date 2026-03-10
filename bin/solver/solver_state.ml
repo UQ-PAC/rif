@@ -96,8 +96,8 @@ module SolverState : SolverState = struct
     print_endline "Aliasing in state:";
     s.aliasing |> S.bindings
     |> List.map (fun (k, v) ->
-           s.terms |> S.find v |> Term.to_string
-           |> Printf.sprintf "%s -> %s -> %s" k v)
+        s.terms |> S.find v |> Term.to_string
+        |> Printf.sprintf "%s -> %s -> %s" k v)
     |> List.iter print_endline;
 
     print_endline "Terms in state:";
@@ -108,12 +108,12 @@ module SolverState : SolverState = struct
     print_endline "Predicates in state:";
     s.predicates |> S.bindings
     |> List.map (fun (k, v) ->
-           List.map (fun (a, b) -> (k, a, b)) @@ S.bindings v)
+        List.map (fun (a, b) -> (k, a, b)) @@ S.bindings v)
     |> List.flatten
     |> List.iter (fun (name, predicate, value) ->
-           print_endline
-           @@ Printf.sprintf "%s(%s) : %s" predicate name
-           @@ Term.to_string value)
+        print_endline
+        @@ Printf.sprintf "%s(%s) : %s" predicate name
+        @@ Term.to_string value)
 
   let find_opt (s : state) (k : string) : Term.term option =
     match S.find_opt k s.aliasing with
@@ -228,8 +228,7 @@ module SolverState : SolverState = struct
     let map =
       s.terms
       |> S.mapi (fun k v ->
-             func s k
-             |> Option.get_or "Instruction references undefined variable?")
+          func s k |> Option.get_or "Instruction references undefined variable?")
     in
 
     { s with terms = map; predicates = update_predicates tm slv s map }

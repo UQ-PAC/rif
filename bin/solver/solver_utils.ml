@@ -23,8 +23,8 @@ module SolverUtils = struct
       if String.equal s "true" then ()
       else
         (match human with
-        | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
-        | false -> s)
+          | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
+          | false -> s)
         |> Printf.sprintf "(assume %s)"
         |> print_endline;
       t
@@ -34,8 +34,8 @@ module SolverUtils = struct
       if String.equal s "true" then ()
       else
         (match human with
-        | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
-        | false -> s)
+          | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
+          | false -> s)
         |> Printf.sprintf "(assert %s)"
         |> print_endline;
       t
@@ -45,8 +45,8 @@ module SolverUtils = struct
       if String.equal s "true" then ()
       else
         (match human with
-        | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
-        | false -> s)
+          | true -> Str.global_replace rxp {|(|f_\1| ...)|} s
+          | false -> s)
         |> Printf.sprintf "(constraint %s)"
         |> print_endline;
       t
@@ -153,8 +153,9 @@ module SolverUtils = struct
 
   type combination = (string * string) list * (string * string * bool) list
 
-  let generate_stage2_pres (inst_vars : string list) (comb : combination list) :
-      combination list =
+  let generate_stage2_pres (preds : (string * string) list)
+      (taints : (string * string list) list) (inst_vars : string list)
+      (comb : combination list) : combination list =
     (* For every inst_var that isn't pointed to by an alias, make more combinations for it *)
     let expand_combination ((aliasing, combination) : combination) :
         combination list =

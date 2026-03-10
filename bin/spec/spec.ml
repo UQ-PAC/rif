@@ -10,6 +10,7 @@ module type Spec = sig
   module Analysis : sig
     val sanity : Lang.spec -> unit
     val spec_syms : Lang.spec * Lang.spec -> string list
+    val relevant_preds : Lang.spec -> Lang.spec -> (string * string) list
   end
 
   module Parse : SpecParse

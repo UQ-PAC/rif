@@ -93,7 +93,7 @@ module SolverSpec : SolverSpec = struct
     let pred_uses =
       fst spec @ snd spec
       |> List.map (function
-             | Spec.Lang.Constraint b | Spec.Lang.Function (_, b) -> b)
+          | Spec.Lang.Constraint b | Spec.Lang.Function (_, b) -> b)
       |> List.map collect_preds |> List.flatten |> List.sort_uniq sort_pair
     in
 

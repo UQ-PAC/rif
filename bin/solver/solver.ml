@@ -37,10 +37,15 @@ module Solver : Solver = struct
   }
 
   let failure_eq f1 f2 =
-    Lifter.IR.instruction_eq f1.i1 f2.i1 &&
-    Lifter.IR.instruction_eq f1.i2 f2.i2 &&
-    List.equal (fun (a,b) (c,d) -> String.equal a c && String.equal b d) f1.aliasing f2.aliasing &&
-    List.equal (fun (a,b,c) (d,e,f) -> String.equal a d && String.equal b e && (c == f)) f1.precondition f2.precondition
+    Lifter.IR.instruction_eq f1.i1 f2.i1
+    && Lifter.IR.instruction_eq f1.i2 f2.i2
+    && List.equal
+         (fun (a, b) (c, d) -> String.equal a c && String.equal b d)
+         f1.aliasing f2.aliasing
+    && List.equal
+         (fun (a, b, c) (d, e, f) ->
+           String.equal a d && String.equal b e && c == f)
+         f1.precondition f2.precondition
 
   type sp = Spec.Lang.spec * Spec.Lang.spec
   type ip = Lifter.IR.instruction * Lifter.IR.instruction
@@ -117,9 +122,13 @@ module Solver : Solver = struct
     let aliases = SolverUtils.make_aliases inst_vars spec_vars in
     let preconditions = SolverSpec.generate_stage1_pres spec in
     (* TODO(nice; config): manual specification of combinations *)
+
+    let preds = Spec.Analysis.relevant_preds (fst spec) (snd spec) in
+    let taints = SolverInst.pair_taints pair in
+
     let combinations =
       SolverUtils.cross_product aliases preconditions
-      |> SolverUtils.generate_stage2_pres inst_vars
+      |> SolverUtils.generate_stage2_pres preds taints inst_vars
     in
     (* TODO(nice): base output on --verbose flag *)
     print_endline

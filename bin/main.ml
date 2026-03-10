@@ -81,36 +81,53 @@ let () =
       "[!] FAILED: At least one reorderable pair did not uphold the R/G spec.";
 
   let generalise_failure others (f : Solver.failure) =
-    let identical_except_for (f1 : Solver.failure) (f2 : Solver.failure) (pred, input) =
-      Lifter.IR.instruction_eq f1.i1 f2.i1 &&
-      Lifter.IR.instruction_eq f2.i2 f2.i2 &&
-      List.equal (fun (a,b) (c,d) -> String.equal a c && String.equal b d) f1.aliasing f2.aliasing &&
-      (
-        let f1pre = List.find_opt (fun (a,b,_) -> String.equal a pred && String.equal b input) f1.precondition in
-        let f2pre = List.find_opt (fun (a,b,_) -> String.equal a pred && String.equal b input) f2.precondition in
-        match (f1pre,f2pre) with
-        | (Some (_,_,false), Some (_,_,true)) -> true
-        | (Some (_,_,true), Some (_,_,false)) -> true
-        | _ -> false
-      )
+    let identical_except_for (f1 : Solver.failure) (f2 : Solver.failure)
+        (pred, input) =
+      Lifter.IR.instruction_eq f1.i1 f2.i1
+      && Lifter.IR.instruction_eq f2.i2 f2.i2
+      && List.equal
+           (fun (a, b) (c, d) -> String.equal a c && String.equal b d)
+           f1.aliasing f2.aliasing
+      &&
+      let f1pre =
+        List.find_opt
+          (fun (a, b, _) -> String.equal a pred && String.equal b input)
+          f1.precondition
+      in
+      let f2pre =
+        List.find_opt
+          (fun (a, b, _) -> String.equal a pred && String.equal b input)
+          f2.precondition
+      in
+      match (f1pre, f2pre) with
+      | Some (_, _, false), Some (_, _, true) -> true
+      | Some (_, _, true), Some (_, _, false) -> true
+      | _ -> false
     in
 
-    let distinct_pres = List.filter (fun (p,i,_) -> not @@ List.exists (fun o -> identical_except_for f o (p,i)) others) f.precondition in
+    let distinct_pres =
+      List.filter
+        (fun (p, i, _) ->
+          not @@ List.exists (fun o -> identical_except_for f o (p, i)) others)
+        f.precondition
+    in
     { f with precondition = distinct_pres }
   in
 
   let rec uniq_failures = function
-  | [] -> []
-  | x :: xs -> if List.exists (Solver.failure_eq x) xs then uniq_failures xs else x :: uniq_failures xs
+    | [] -> []
+    | x :: xs ->
+        if List.exists (Solver.failure_eq x) xs then uniq_failures xs
+        else x :: uniq_failures xs
   in
 
-  List.map (generalise_failure failed) failed |>
-  uniq_failures |>
-  List.iteri
-    (fun idx (f : Solver.failure) ->
+  List.map (generalise_failure failed) failed
+  |> uniq_failures
+  |> List.iteri (fun idx (f : Solver.failure) ->
       print_endline
       @@ Printf.sprintf
-           "    [!] Failure %i:\n      Instruction [%x: %s] reordering with [%x: %s], when:"
+           "    [!] Failure %i:\n\
+           \      Instruction [%x: %s] reordering with [%x: %s], when:"
            (idx + 1) f.i1.index f.i1.readable f.i2.index f.i2.readable;
       List.iter
         (fun (a, b) ->
