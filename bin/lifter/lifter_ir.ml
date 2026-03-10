@@ -2,6 +2,7 @@ open LibASL
 
 module type LifterIR = sig
   type var = Memory of var | Add of var * int64 | Register of int | PC | SP | PSTATE
+
   type edgetype = Linear | Branch | Entry
   type edge = string * edgetype
   type edges = edge list
@@ -10,6 +11,7 @@ module type LifterIR = sig
     read : var list;
     write : var list;
     fence : bool;
+
     semantics : LibASL.Asl_ast.stmt list;
 
     readable : string;
@@ -51,7 +53,9 @@ module LifterIR : LifterIR = struct
     | SP -> "SP"
     | PSTATE -> "PSTATE"
     | Memory v -> "M@" ^ string_of_var v
-    | Add (v,i) -> (string_of_var v) ^ "+" ^ Int64.to_string i
+    | Add (v,i) ->
+        let ch = if i >= 0L then "+" else "" in (* for negatives, Int64.to_string produces "-40" *)
+        (string_of_var v) ^ ch ^ Int64.to_string i
 
   let rec var_of_string = function
     | "PC" -> PC
@@ -70,6 +74,7 @@ module LifterIR : LifterIR = struct
     read : var list;
     write : var list;
     fence : bool;
+
     semantics : LibASL.Asl_ast.stmt list;
 
     readable : string;

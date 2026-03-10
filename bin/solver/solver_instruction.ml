@@ -14,11 +14,10 @@ module SolverInst : SolverInst = struct
 
   class translator =
     object (this)
-      val mutable cse_prop : Term.term S.t = S.empty
+      val mutable cse_prop : Asl_ast.expr S.t = S.empty
 
       method stmtlist tm state =
         let input_term n =
-          print_endline n;
           SolverState.find_opt state n
           |> Option.get_or "Instruction references undefined variable?"
         in
@@ -29,11 +28,14 @@ module SolverInst : SolverInst = struct
 
         let cvc_of_lexpr (e : Asl_ast.lexpr) : string =
           (* LExpr values are collected as "outputs" for functions *)
-          match e with
-          | LExpr_Var (Ident "SP_EL0") -> "SP"
-          | LExpr_Var (Ident "_PC") -> "PC"
-          | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) -> "R" ^ i
+          (match e with
+          | LExpr_Var (Ident "SP_EL0") -> Lifter.IR.SP
+          | LExpr_Var (Ident "_PC") -> Lifter.IR.PC
+          | LExpr_Array (LExpr_Var (Ident "_R"), Expr_LitInt i) -> Lifter.IR.Register (int_of_string i)
+          | LExpr_Var (Ident "BTypeNext") -> Lifter.IR.PSTATE
+          | LExpr_Field (LExpr_Var (Ident "PSTATE"), _) -> Lifter.IR.PSTATE
           | _ -> SolverUtils.unexpected @@ LExpr e
+          ) |> Lifter.IR.string_of_var
         in
 
         let cvc_of_function (s : string) : Kind.t =
@@ -46,46 +48,68 @@ module SolverInst : SolverInst = struct
           | _ -> SolverUtils.unexpected @@ Fun s
         in
 
-        let cvc_of_write (e : Asl_ast.expr) : string =
-          match e with
-          | Expr_Var (Ident "SP_EL0") -> "SP"
-          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> "M@R" ^ i
-          | Expr_TApply
-              ( FIdent ("add_bits", _),
-                _,
-                [
-                  Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i);
-                  Expr_LitBits b;
-                ] ) ->
-              Printf.sprintf "M@R%s+%i" i (int_of_string ("0b" ^ b))
-          | _ -> SolverUtils.unexpected @@ Addr e
+        let takeExpr e =
+          let dump_fail s v =
+            if (Option.is_none v) then (print_endline s; SolverUtils.unexpected @@ Expr e) else v
+          in
+
+          (* If memory, then maybe an add of variables or variables
+             Otherwise just variables
+           *)
+          let takeOff : (Asl_ast.expr -> int64) = function
+            | Expr_LitBits b -> Int64.of_string ("0b" ^ b)
+            | _ -> Int64.of_int 0
+          in
+          let rec lv1 : (Asl_ast.expr -> Lifter.IR.var option) = function
+            | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) -> Some (Register (int_of_string i))
+            | Expr_Var (Ident "SP_EL0") -> Some SP
+            | Expr_Var (Ident "_PC") -> Some PC
+            | Expr_Var (Ident "BTypeNext") -> Some PSTATE
+            | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
+            | Expr_Var (Ident n) when S.exists (fun s _ -> String.equal s n) cse_prop ->
+                S.find n cse_prop |> lv2
+            | v -> dump_fail "lv1" None
+          and lv2 : (Asl_ast.expr -> Lifter.IR.var option) = function
+            | Expr_TApply (FIdent ("add_bits", _), _, [reg; off]) ->
+                lv1 reg |> dump_fail "lv2" |> Option.map (fun v -> Lifter.IR.Add (v, takeOff off))
+            | v -> lv1 v
+          and lv3 : (Asl_ast.expr -> Lifter.IR.var option) = function
+            | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _tl) ->
+                lv2 addr |> dump_fail "lv3" |> Option.map (fun v -> Lifter.IR.Memory v)
+            | v -> lv1 v
+          in
+
+          lv3 e |> dump_fail "top" |> Option.map (fun v ->
+            let rec inner (count : int64) = function
+              | Lifter.IR.Memory v -> Lifter.IR.Memory (inner 0L v)
+              | Lifter.IR.Add (v,i) -> inner (Int64.add count i) v
+              | v -> if count == 0L then v else Lifter.IR.Add (v, count)
+            in
+            inner 0L v
+          ) |> Option.map Lifter.IR.string_of_var
         in
 
-        let cvc_of_read (e : Asl_ast.expr) : Term.term =
-          input_term @@ cvc_of_write e
+        let cvc_of_write (e : Asl_ast.expr) : string =
+          (* We know we're under a stmt_tcall Mem.set, so construct a dummy Mem.read
+             to tell `takeExpr` that we should look for memory-at-E variables
+           *)
+          takeExpr (Expr_TApply (FIdent ("Mem.read", 0), [], [e])) |> Option.get
         in
 
         let rec cvc_of_expr (e : Asl_ast.expr) : Term.term =
           match e with
-          | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
-              input_term ("R" ^ i)
-          | Expr_Var (Ident n) -> S.find n cse_prop
-          | Expr_TApply (FIdent ("Mem.read", _), _, es) ->
-              cvc_of_read (List.hd es)
-          | Expr_TApply (FIdent (f, _), _, es) -> (
-              match cvc_of_function f with
-              | Kind.Null_term -> cvc_of_expr (List.hd es)
-              | k -> Term.mk_term tm k (Array.of_list (List.map cvc_of_expr es))
-              )
-          | Expr_Slices (e, slices) ->
-              (* Skip over slices for now
-              let _bits = List.map cvc_of_slice slices in *)
-              cvc_of_expr e
           | Expr_LitInt s -> Term.mk_int tm @@ int_of_string s
-          | Expr_LitBits s ->
-              Term.mk_int tm @@ Int64.to_int @@ Int64.of_string @@ "0b" ^ s
-          | Expr_Field _ | _ -> SolverUtils.unexpected @@ Expr e
-        in
+          | Expr_LitBits s -> Term.mk_int64 tm @@ Int64.of_string @@ "0b" ^ s
+          | Expr_TApply (FIdent (n, _), _, vs) when not @@ String.equal n "Mem.read" ->
+              (cvc_of_function n |> function
+                | Kind.Null_term -> List.hd vs |> cvc_of_expr
+                | v -> Term.mk_term tm v (List.map cvc_of_expr vs |> Array.of_list))
+          | Expr_Var (Ident n) when S.exists (fun s _ -> String.equal s n) cse_prop ->
+              S.find n cse_prop |> cvc_of_expr
+          | Expr_Slices (v, _)
+          | v ->
+              takeExpr v |> Option.map input_term |> Option.get
+          in
 
         let cvc_of_stmt (s : Asl_ast.stmt) : (string -> Term.term option) option
             =
@@ -104,7 +128,7 @@ module SolverInst : SolverInst = struct
                     Some (cvc_of_expr value)
                   else None)
           | Stmt_ConstDecl (_, Ident n, exp, _) ->
-              cse_prop <- S.add n (cvc_of_expr exp) cse_prop;
+              cse_prop <- S.add n exp cse_prop;
               None
           | Stmt_VarDecl _ | Stmt_VarDeclsNoInit _ | Stmt_Assert _
           | Stmt_TCall (FIdent (_, _), _, _, _)

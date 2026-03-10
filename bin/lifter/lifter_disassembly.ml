@@ -21,6 +21,7 @@ module LifterDisassembly = struct
           read = [];
           write = [];
           fence = false;
+
           semantics = [];
 
           readable = "";
@@ -31,10 +32,9 @@ module LifterDisassembly = struct
       method get =
         (* Collapse Add (Add (v, 1), 2) into Add (v, 3) *)
         let collapse =
-          let (+) = Int64.add in
           let rec inner (count : int64) = function
             | LifterIR.Memory v -> LifterIR.Memory (inner 0L v)
-            | Add (v,i) -> inner (count + i) v
+            | Add (v,i) -> inner (Int64.add count i) v
             | v -> if count == 0L then v else LifterIR.Add (v, count)
           in
           List.map (fun e -> inner 0L e)
