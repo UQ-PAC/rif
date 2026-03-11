@@ -36,7 +36,7 @@ module SolverInst : SolverInst = struct
         failwith "Found mem-write as RHS expression...?"
     | _ -> SolverUtils.unexpected @@ Fun s
 
-  let _cvc_of_slice (s : Asl_ast.slice) : Op.op =
+  let cvc_of_slice (s : Asl_ast.slice) : Op.op =
     match s with _ -> SolverUtils.unexpected @@ Slice s
 
   class ast_traverse =
@@ -45,10 +45,7 @@ module SolverInst : SolverInst = struct
 
       method ir_of_expr e =
         let dump_fail s v =
-          if Option.is_none v then (
-            print_endline s;
-            SolverUtils.unexpected @@ Expr e)
-          else v
+          if Option.is_none v then SolverUtils.unexpected @@ Expr e else v
         in
 
         (* If memory, then maybe an add of variables or variables
@@ -58,17 +55,17 @@ module SolverInst : SolverInst = struct
           | Expr_LitBits b -> Int64.of_string ("0b" ^ b)
           | _ -> Int64.of_int 0
         in
-        let rec lv1 : Asl_ast.expr -> Lifter.IR.var option = function
+        let rec lv1 (e : Asl_ast.expr) : Lifter.IR.var option =
+          match e with
           | Expr_Array (Expr_Var (Ident "_R"), Expr_LitInt i) ->
               Some (Register (int_of_string i))
           | Expr_Var (Ident "SP_EL0") -> Some SP
           | Expr_Var (Ident "_PC") -> Some PC
           | Expr_Var (Ident "BTypeNext") -> Some PSTATE
           | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
-          | Expr_Var (Ident n)
-            when S.exists (fun s _ -> String.equal s n) cse_prop ->
+          | Expr_Var (Ident n) when S.find_opt n cse_prop |> Option.is_some ->
               S.find n cse_prop |> lv2
-          | v -> dump_fail "lv1" None
+          | v -> SolverUtils.unexpected @@ Expr e (* dump_fail "lv1" None *)
         and lv2 : Asl_ast.expr -> Lifter.IR.var option = function
           | Expr_TApply (FIdent ("add_bits", _), _, [ reg; off ]) ->
               lv1 reg |> dump_fail "lv2"
@@ -114,8 +111,7 @@ module SolverInst : SolverInst = struct
               | Kind.Null_term -> List.hd vs |> cvc_of_expr
               | v -> Term.mk_term tm v (List.map cvc_of_expr vs |> Array.of_list)
               )
-          | Expr_Var (Ident n)
-            when S.exists (fun s _ -> String.equal s n) cse_prop ->
+          | Expr_Var (Ident n) when S.find_opt n cse_prop |> Option.is_some ->
               S.find n cse_prop |> cvc_of_expr
           | Expr_Slices (v, _) | v ->
               this#ir_of_expr v |> Option.map input_term |> Option.get
@@ -149,18 +145,36 @@ module SolverInst : SolverInst = struct
         cse_prop <- S.empty;
         List.filter_map cvc_of_stmt
 
-      method calculate_taints : Asl_ast.stmt list -> string S.t =
-        let taint_expr e = this#ir_of_expr e in
+      method calculate_taints : Asl_ast.stmt list -> string list S.t =
+        let add k v m =
+          match S.find_opt k m with
+          | None -> S.add k v m
+          | Some ts -> S.add k (v @ ts) m
+        in
 
-        let taint_stmt taints : Asl_ast.stmt -> string S.t = function
+        let rec taint_expr : Asl_ast.expr -> string list = function
+          | Expr_TApply (FIdent (n, _), _, vs)
+            when not @@ String.equal n "Mem.read" ->
+              List.flatten @@ List.map taint_expr vs
+          | Expr_LitInt _ | Expr_LitHex _ | Expr_LitReal _ | Expr_LitBits _
+          | Expr_LitMask _ | Expr_LitString _ ->
+              []
+          | Expr_Var (Ident n) when S.find_opt n cse_prop |> Option.is_some ->
+              S.find n cse_prop |> taint_expr
+          | Expr_Slices (v, _) | Expr_Unop (_, v) | v ->
+              [ this#ir_of_expr v ] |> List.filter_map (fun i -> i)
+        in
+
+        let taint_stmt taints (s : Asl_ast.stmt) : string list S.t =
+          match s with
           | Stmt_Assign (l, r, _) -> (
               match taint_expr r with
-              | Some s -> S.add (name_of_lexpr l) s taints
-              | None -> S.remove (name_of_lexpr l) taints)
+              | t :: ts -> add (name_of_lexpr l) (t :: ts) taints
+              | [] -> S.remove (name_of_lexpr l) taints)
           | Stmt_TCall (FIdent ("Mem.set", _), _, addr :: es, _) -> (
               match List.rev es |> List.hd |> taint_expr with
-              | Some s -> S.add (this#ir_of_write addr) s taints
-              | None -> S.remove (this#ir_of_write addr) taints)
+              | t :: ts -> S.add (this#ir_of_write addr) (t :: ts) taints
+              | [] -> S.remove (this#ir_of_write addr) taints)
           | Stmt_ConstDecl (_, Ident n, exp, _) ->
               cse_prop <- S.add n exp cse_prop;
               taints
@@ -183,17 +197,22 @@ module SolverInst : SolverInst = struct
 
   let taints (i : Lifter.IR.instruction) : string list S.t =
     let taints = (new ast_traverse)#calculate_taints i.semantics in
-    let closure =
-      S.fold
-        (fun k v map ->
-          (* Keep iterating the map for k -> v1 -> v2 -> ... *)
-          let rec collect i =
-            match S.find_opt i map with Some v2 -> v :: collect i | None -> []
+
+    let reachable =
+      S.bindings taints
+      |> List.map (fun (k, vs) ->
+          let rec fixpoint (current : string list) : string list =
+            let next =
+              List.filter_map (fun k -> S.find_opt k taints) current
+              |> List.flatten
+            in
+            let maybe = List.sort_uniq String.compare (current @ next) in
+            if List.length maybe > List.length current then fixpoint maybe
+            else current
           in
-          S.add k (collect k) map)
-        taints S.empty
+          (k, k :: fixpoint vs))
     in
-    closure
+    List.fold_left (fun m (k, v) -> S.add k v m) S.empty reachable
 
   let pair_taints (i1, i2) : (string * string list) list =
     S.union (fun _ _ _ -> None) (i1 |> taints) (i2 |> taints) |> S.bindings

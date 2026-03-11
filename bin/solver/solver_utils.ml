@@ -150,12 +150,30 @@ module SolverUtils = struct
     List.filter (fun l ->
         List.length l
         == (List.map snd l |> List.sort_uniq String.compare |> List.length))
+    |>
+    (* Filter out all series of aliasing where a spec sym isn't mapped *)
+    List.filter (fun l ->
+        List.for_all
+          (fun sp -> List.exists (fun (a, _) -> String.equal sp a) l)
+          spec_syms)
 
   type combination = (string * string) list * (string * string * bool) list
 
-  let generate_stage2_pres (preds : (string * string) list)
+  (*
+    pred_uses: function * specvar list    e.g. [(locked, lock), (secret, x)]
+    taints: instvar * instvar list list   e.g. [(r0, [m@r1]), (r2, [m@sp+2])]
+    inst_vars: instruction variable list  e.g. [r0, m@r0, m@sp+2]
+    comb: alias list * pred list          e.g. ([(x,m@r0), (lock,m@r1)], [(secret,x,true), (locked,x,false)])
+  *)
+  let generate_stage2_pres (pred_uses : (string * string) list)
       (taints : (string * string list) list) (inst_vars : string list)
       (comb : combination list) : combination list =
+    let pred_uses =
+      List.filter (fun (a, _) -> not @@ String.equal a "") pred_uses
+      |> List.sort_uniq (fun (a, b) (c, d) ->
+          match String.compare a c with 0 -> String.compare b d | v -> v)
+    in
+
     (* For every inst_var that isn't pointed to by an alias, make more combinations for it *)
     let expand_combination ((aliasing, combination) : combination) :
         combination list =
@@ -183,6 +201,51 @@ module SolverUtils = struct
       |> List.map (fun a -> (aliasing, a))
     in
 
-    (* TODO(performance): Mini-taint-analysis, don't generate unnecessary register-value predicates. *)
-    List.flatten @@ List.map expand_combination comb
+    let module O = Set.Make (struct
+      type t = string * string * bool
+
+      let compare (f1, v1, b1) (f2, v2, b2) =
+        match String.compare f1 f2 with
+        | 0 -> (
+            match String.compare v1 v2 with 0 -> Bool.compare b1 b2 | v -> v)
+        | v -> v
+    end) in
+    let unfiltered = List.map expand_combination comb |> List.flatten in
+
+    let taint_filtered =
+      List.map
+        (fun (aliasing, pres) ->
+          ( aliasing,
+            O.of_list
+            @@ List.filter
+                 (fun pre ->
+                   (* Given aliasing, pred_uses, and taints, work out whether or not this pre-condition is actually necessary. *)
+                   let pre_name, pre_var, _ = pre in
+                   let tainted_vars =
+                     List.flatten
+                     @@ List.map
+                          (fun (n, vs) ->
+                            if String.equal pre_var n then vs else [])
+                          taints
+                   in
+                   let pred_uses =
+                     List.filter_map
+                       (fun (n, v) ->
+                         if String.equal pre_name n then Some v else None)
+                       pred_uses
+                   in
+
+                   (* Given the variables tainted by this precondition's variable,
+        and the spec variables for which this precondition's function is called *)
+                   List.exists
+                     (fun (tov, fromv) ->
+                       List.exists (String.equal fromv) tainted_vars
+                       && List.exists (String.equal tov) pred_uses)
+                     aliasing)
+                 pres ))
+        unfiltered
+    in
+
+    List.sort_uniq (fun (_, s1) (_, s2) -> O.compare s1 s2) taint_filtered
+    |> List.map (fun (a, s) -> (a, O.elements s))
 end
