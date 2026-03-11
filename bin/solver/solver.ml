@@ -58,6 +58,10 @@ module Solver : Solver = struct
       |> SolverState.link_aliases slv srt als ssyms
       |> SolverState.add_preconditions tm slv srt pre
     in
+    print_endline i1.readable;
+    print_endline i2.readable;
+    SolverState.dump initial;
+    print_endline "\n";
 
     let rely =
       SolverSpec.translate_fn tm r |> SolverState.apply_pred tm slv srt

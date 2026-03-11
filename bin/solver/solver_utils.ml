@@ -183,17 +183,65 @@ module SolverUtils = struct
             not @@ List.exists (fun a -> String.equal v @@ snd a) aliasing)
           inst_vars
       in
-      let all_preds =
-        List.map (fun (p, _, _) -> p) combination
-        |> List.sort_uniq String.compare
+
+      (* Given taint (r0, [M@R0, M@R2]), pred_uses (locked, x), and aliasing (x,M@R0)
+         compute (locked, [r0, ...]) and therefore compute [(locked, r0) ...] *)
+
+      (*
+        Step 1: turn pred_uses (locked,x) into pred_alias_uses (locked,M@R0)
+      *)
+      let pred_alias_uses =
+        List.map
+          (fun (pred, var) ->
+            ( pred,
+              List.find (fun (fromv, _) -> String.equal fromv var) aliasing
+              |> snd ))
+          pred_uses
       in
 
-      let new_predicates = cross_product all_preds unaliased_vars in
-      let all = List.length new_predicates |> combine in
+      (*
+        Step 2: turn pred_alias_uses (locked,M@R0) into taint_per_pred (locked,[R0,M@R0])
+      *)
+      let taint_per_pred =
+        List.map
+          (fun (pred, var) ->
+            ( pred,
+              List.filter_map
+                (fun (taintfrom, tainting) ->
+                  if List.exists (String.equal var) tainting then Some taintfrom
+                  else None)
+                taints ))
+          pred_alias_uses
+      in
 
+      (*
+        Step 3: turn taint_per_pred into new_predicates [(locked,R0),(locked,M@R0)]
+      *)
+      let new_preds =
+        List.flatten
+        @@ List.map (fun (a, b) -> List.map (fun c -> (a, c)) b) taint_per_pred
+      in
+
+      (*
+        Step 4: filter based on whether the var is already aliased (and therefore already combined-over)
+      *)
+      let filtered_new_preds =
+        List.filter
+          (fun (_, var) -> List.exists (String.equal var) unaliased_vars)
+          new_preds
+      in
+
+      (*
+        Step 5: generate 2^n "combinations" for true/false * every necessary predicate
+      *)
+      let all = List.length filtered_new_preds |> combine in
+
+      (*
+        Step 6: massage this back into the right format: [(locked, R0, true), ...]
+      *)
       let new_combs =
         List.map
-          (fun l -> List.map2 (fun (a, b) c -> (a, b, c)) new_predicates l)
+          (fun l -> List.map2 (fun (a, b) c -> (a, b, c)) filtered_new_preds l)
           all
       in
 
@@ -201,51 +249,5 @@ module SolverUtils = struct
       |> List.map (fun a -> (aliasing, a))
     in
 
-    let module O = Set.Make (struct
-      type t = string * string * bool
-
-      let compare (f1, v1, b1) (f2, v2, b2) =
-        match String.compare f1 f2 with
-        | 0 -> (
-            match String.compare v1 v2 with 0 -> Bool.compare b1 b2 | v -> v)
-        | v -> v
-    end) in
-    let unfiltered = List.map expand_combination comb |> List.flatten in
-
-    let taint_filtered =
-      List.map
-        (fun (aliasing, pres) ->
-          ( aliasing,
-            O.of_list
-            @@ List.filter
-                 (fun pre ->
-                   (* Given aliasing, pred_uses, and taints, work out whether or not this pre-condition is actually necessary. *)
-                   let pre_name, pre_var, _ = pre in
-                   let tainted_vars =
-                     List.flatten
-                     @@ List.map
-                          (fun (n, vs) ->
-                            if String.equal pre_var n then vs else [])
-                          taints
-                   in
-                   let pred_uses =
-                     List.filter_map
-                       (fun (n, v) ->
-                         if String.equal pre_name n then Some v else None)
-                       pred_uses
-                   in
-
-                   (* Given the variables tainted by this precondition's variable,
-        and the spec variables for which this precondition's function is called *)
-                   List.exists
-                     (fun (tov, fromv) ->
-                       List.exists (String.equal fromv) tainted_vars
-                       && List.exists (String.equal tov) pred_uses)
-                     aliasing)
-                 pres ))
-        unfiltered
-    in
-
-    List.sort_uniq (fun (_, s1) (_, s2) -> O.compare s1 s2) taint_filtered
-    |> List.map (fun (a, s) -> (a, O.elements s))
+    List.map expand_combination comb |> List.flatten
 end
