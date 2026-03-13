@@ -58,10 +58,12 @@ module Solver : Solver = struct
       |> SolverState.link_aliases slv srt als ssyms
       |> SolverState.add_preconditions tm slv srt pre
     in
+    (* 
     print_endline i1.readable;
     print_endline i2.readable;
     SolverState.dump initial;
     print_endline "\n";
+    *)
 
     let rely =
       SolverSpec.translate_fn tm r |> SolverState.apply_pred tm slv srt
@@ -88,10 +90,6 @@ module Solver : Solver = struct
       |> SolverState.link_aliases slv srt als ssyms
       |> SolverState.add_preconditions tm slv srt pre
     in
-    print_endline i1.readable;
-    print_endline i2.readable;
-    SolverState.dump initial;
-    print_endline "\n";
 
     let exists1 = SolverState.reinitialise ~prime:"'" tm slv srt initial in
     let exists2 = SolverState.reinitialise ~prime:"\"" tm slv srt initial in
@@ -150,22 +148,24 @@ module Solver : Solver = struct
     @@ Printf.sprintf "    [!] Have %i valid pre-states"
     @@ List.length valid_in_order;
 
-    if 0 == List.length valid_in_order then
-      failwith "[ERROR] No pre-states are valid in-order. Check your spec!";
+    if 0 == List.length valid_in_order then (
+      print_endline
+        "    [!] No pre-states are valid for this pair. Check your spec!";
+      [])
+    else
+      let failing_out_order =
+        List.filter
+          (fun c -> solve_out_order tm srt context c |> not)
+          valid_in_order
+      in
+      print_endline
+      @@ Printf.sprintf "    [!] Have %i successful pre-states"
+      @@ (List.length valid_in_order - List.length failing_out_order);
 
-    let failing_out_order =
-      List.filter
-        (fun c -> solve_out_order tm srt context c |> not)
-        valid_in_order
-    in
-    print_endline
-    @@ Printf.sprintf "    [!] Have %i successful pre-states"
-    @@ (List.length valid_in_order - List.length failing_out_order);
-
-    List.map
-      (fun (a, p) ->
-        { i1 = fst pair; i2 = snd pair; aliasing = a; precondition = p })
-      failing_out_order
+      List.map
+        (fun (a, p) ->
+          { i1 = fst pair; i2 = snd pair; aliasing = a; precondition = p })
+        failing_out_order
 
   let solve_all ~verb ~mode (spec : sp) (pairs : ip list) : failure list =
     let tm = TermManager.mk_tm () in

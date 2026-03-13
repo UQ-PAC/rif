@@ -101,11 +101,9 @@ module SolverState : SolverState = struct
     |> List.iter print_endline;
 
     print_endline "Terms in state:";
-    s.terms |> S.bindings
-    |> List.map (fun (k, v) -> Term.to_string v |> Printf.sprintf "%s -> %s" k)
-    |> List.iter print_endline;
+    s.terms |> S.bindings |> List.iter (fun (k, _) -> print_string @@ " " ^ k);
 
-    print_endline "Predicates in state:";
+    print_endline "\nPredicates in state:";
     s.predicates |> S.bindings
     |> List.map (fun (k, v) ->
         List.map (fun (a, b) -> (k, a, b)) @@ S.bindings v)
