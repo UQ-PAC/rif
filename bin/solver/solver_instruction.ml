@@ -36,9 +36,6 @@ module SolverInst : SolverInst = struct
         failwith "Found mem-write as RHS expression...?"
     | _ -> SolverUtils.unexpected @@ Fun s
 
-  let cvc_of_slice (s : Asl_ast.slice) : Op.op =
-    match s with _ -> SolverUtils.unexpected @@ Slice s
-
   class ast_traverse =
     object (this)
       val mutable cse_prop : Asl_ast.expr S.t = S.empty
@@ -64,7 +61,7 @@ module SolverInst : SolverInst = struct
           | Expr_Var (Ident "BTypeNext") -> Some PSTATE
           | Expr_Field (Expr_Var (Ident "PSTATE"), _) -> Some PSTATE
           | Expr_Var (Ident n) when S.find_opt n cse_prop |> Option.is_some ->
-              S.find n cse_prop |> lv2
+              S.find n cse_prop |> lv4
           | v -> SolverUtils.unexpected @@ Expr e (* dump_fail "lv1" None *)
         and lv2 : Asl_ast.expr -> Lifter.IR.var option = function
           | Expr_TApply (FIdent ("add_bits", _), _, [ reg; off ]) ->
@@ -72,9 +69,17 @@ module SolverInst : SolverInst = struct
               |> Option.map (fun v -> Lifter.IR.Add (v, takeOff off))
           | v -> lv1 v
         and lv3 : Asl_ast.expr -> Lifter.IR.var option = function
-          | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _tl) ->
+          | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _) ->
               lv2 addr |> dump_fail "lv3"
               |> Option.map (fun v -> Lifter.IR.Memory v)
+          | v -> lv1 v
+        and lv4 : Asl_ast.expr -> Lifter.IR.var option = function
+          | Expr_TApply (FIdent ("Mem.read", _), _, addr :: _) ->
+              lv2 addr |> dump_fail "lv4"
+              |> Option.map (fun v -> Lifter.IR.Memory v)
+          | Expr_TApply (FIdent ("add_bits", _), _, [ reg; off ]) ->
+              lv1 reg |> dump_fail "lv4"
+              |> Option.map (fun v -> Lifter.IR.Add (v, takeOff off))
           | v -> lv1 v
         in
 
@@ -162,7 +167,7 @@ module SolverInst : SolverInst = struct
           | Expr_Var (Ident n) when S.find_opt n cse_prop |> Option.is_some ->
               S.find n cse_prop |> taint_expr
           | Expr_Slices (v, _) | Expr_Unop (_, v) | v ->
-              [ this#ir_of_expr v ] |> List.filter_map (fun i -> i)
+              [ this#ir_of_expr v ] |> List.filter_map Fun.id
         in
 
         let taint_stmt taints (s : Asl_ast.stmt) : string list S.t =

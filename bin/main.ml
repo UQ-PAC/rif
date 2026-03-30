@@ -81,6 +81,11 @@ let () =
       "[!] FAILED: At least one reorderable pair did not uphold the R/G spec.";
 
   let generalise_failure others (f : Solver.failure) =
+    (*
+      f1 and f2 must have all exactly the same options as each other
+      EXCEPT for pred(input). The idea is to uncover whether they're both
+      just pred(input)=true and pred(input)=false.
+    *)
     let identical_except_for (f1 : Solver.failure) (f2 : Solver.failure)
         (pred, input) =
       Lifter.IR.instruction_eq f1.i1 f2.i1
@@ -88,6 +93,12 @@ let () =
       && List.equal
            (fun (a, b) (c, d) -> String.equal a c && String.equal b d)
            f1.aliasing f2.aliasing
+      && List.equal
+           (fun (p1, i1, v1) (p2, i2, v2) ->
+             let ( == ) = String.equal in
+             (p1 == p2 && i1 == i2)
+             && (Bool.equal v1 v2 || (pred == p1 && input == i1)))
+           f1.precondition f2.precondition
       &&
       let f1pre =
         List.find_opt
@@ -108,7 +119,9 @@ let () =
     let distinct_pres =
       List.filter
         (fun (p, i, _) ->
-          not @@ List.exists (fun o -> identical_except_for f o (p, i)) others)
+          Fun.negate
+            (List.exists (fun o -> identical_except_for f o (p, i)))
+            others)
         f.precondition
     in
     { f with precondition = distinct_pres }
@@ -121,9 +134,10 @@ let () =
         else x :: uniq_failures xs
   in
 
-  List.map (generalise_failure failed) failed
-  |> uniq_failures
-  |> List.iteri (fun idx (f : Solver.failure) ->
+  let _r = List.map (generalise_failure failed) failed |> uniq_failures in
+
+  List.iteri
+    (fun idx (f : Solver.failure) ->
       print_endline
       @@ Printf.sprintf
            "    [!] Failure %i:\n\
@@ -139,3 +153,4 @@ let () =
         f.precondition;
 
       print_endline "")
+    failed
