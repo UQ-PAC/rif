@@ -123,7 +123,7 @@ module LifterElf : LifterElf = struct
 
       let compare = compare
       let equal a b = 0 == compare a b
-      let default = LifterIR.Entry
+      let default = LifterIR.Linear
     end
 
     module G = Persistent.Digraph.ConcreteLabeled (Block) (Edge)

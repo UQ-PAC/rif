@@ -9,7 +9,7 @@ module type LifterIR = sig
     | SP
     | PSTATE
 
-  type edgetype = Linear | Branch | Entry
+  type edgetype = Linear | Branch
   type edge = string * edgetype
   type edges = edge list
 
@@ -104,7 +104,7 @@ module LifterIR : LifterIR = struct
     let inst_syms i = List.map string_of_var (i.read @ i.write) in
     inst_syms (fst p) @ inst_syms (snd p)
 
-  type edgetype = Linear | Branch | Entry
+  type edgetype = Linear | Branch
   type edge = string * edgetype
   type edges = edge list
 
